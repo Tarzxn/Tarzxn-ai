@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 import requests
-from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, render_template, request, send_file
 from docx import Document
 from openpyxl import Workbook
@@ -18,18 +17,15 @@ from pptx import Presentation
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-load_dotenv()
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
 WORKSPACES = Path(os.environ.get("WORKSPACE_DIR", "data/workspaces"))
 WORKSPACES.mkdir(parents=True, exist_ok=True)
 
 FALLBACK_MODELS = [
-    {"id": "openai/gpt-4.1", "name": "GPT-4.1", "family": "OpenAI", "tag": "Precise coding"},
-    {"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4", "family": "Anthropic", "tag": "Thoughtful builder"},
-    {"id": "google/gemini-2.5-pro", "name": "Gemini 2.5 Pro", "family": "Google", "tag": "Long context"},
-    {"id": "deepseek/deepseek-chat-v3-0324", "name": "DeepSeek V3", "family": "DeepSeek", "tag": "Great value"},
-    {"id": "qwen/qwen3-235b-a22b", "name": "Qwen3 235B", "family": "Qwen", "tag": "Open model"},
+    {"id": "~openai/gpt-latest", "name": "GPT Latest", "family": "OpenAI", "tag": "Paid · maintained alias"},
+    {"id": "~anthropic/claude-sonnet-latest", "name": "Claude Sonnet Latest", "family": "Anthropic", "tag": "Paid · maintained alias"},
+    {"id": "~google/gemini-pro-latest", "name": "Gemini Pro Latest", "family": "Google", "tag": "Paid · maintained alias"},
 ]
 
 SYSTEM = '''You are Forge, an expert software and artifact builder. Turn the request into a concise response plus files. Return ONLY valid JSON using this schema:
@@ -91,7 +87,11 @@ def models():
         response = requests.get("https://openrouter.ai/api/v1/models", timeout=8)
         response.raise_for_status()
         preferred = [m for m in response.json()["data"] if m["id"].split("/")[0] in {"openai","anthropic","google","deepseek","qwen"} and "text" in m.get("architecture",{}).get("output_modalities",["text"])]
-        return jsonify([{ "id":m["id"], "name":m["name"], "family":m["id"].split("/")[0].title(), "tag":f"{m.get('context_length',0)//1000}K context"} for m in preferred[:80]])
+        def price_tag(model):
+            pricing = model.get("pricing", {})
+            values = [pricing.get(field, "0") for field in ("prompt", "completion", "request")]
+            return "Free" if all(str(value) in ("0", "0.0", "0.00") for value in values) else "Paid"
+        return jsonify([{ "id":m["id"], "name":m["name"], "family":m["id"].split("/")[0].title(), "tag":f"{price_tag(m)} · {m.get('context_length',0)//1000}K context"} for m in preferred[:80]])
     except requests.RequestException: return jsonify(FALLBACK_MODELS)
 
 
@@ -99,8 +99,8 @@ def models():
 def chat():
     data = request.get_json(force=True); prompt = str(data.get("prompt", "")).strip()
     if not prompt: return jsonify(error="Enter a request."), 400
-    key = os.environ.get("OPENROUTER_API_KEY")
-    if not key: return jsonify(error="Set OPENROUTER_API_KEY in Render environment variables."), 503
+    key = str(data.get("apiKey", "")).strip()
+    if not key: return jsonify(error="Add your OpenRouter API key with the API key button."), 400
     messages = [{"role":"system","content":SYSTEM}] + data.get("history", [])[-10:] + [{"role":"user","content":prompt}]
     payload = {"model": data.get("model") or FALLBACK_MODELS[0]["id"], "messages": messages, "temperature": 0.35, "response_format":{"type":"json_object"}}
     try:
@@ -110,6 +110,10 @@ def chat():
         for item in files: write_artifact(root, item)
         manifest = [{"path":str(p.relative_to(root)).replace("\\", "/"), "bytes":p.stat().st_size} for p in root.rglob("*") if p.is_file()]
         return jsonify(reply=result.get("reply", "Done."), workspace=workspace_id, files=manifest)
+    except requests.HTTPError as error:
+        # The provider message is useful to the owner but must never include request headers/API keys.
+        detail = error.response.text[:500] if error.response is not None else str(error)
+        return jsonify(error=f"OpenRouter rejected this request ({error.response.status_code}). {detail}"), 502
     except (requests.RequestException, KeyError, json.JSONDecodeError, ValueError) as error:
         return jsonify(error=f"Generation failed: {error}"), 502
 
