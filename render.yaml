@@ -1,11 +1,11 @@
 services:
   - type: web
-    name: forge-huggingface
+    name: forge-ollama-cloud
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
-      - key: HF_TOKEN
+      - key: OLLAMA_API_KEY
         sync: false

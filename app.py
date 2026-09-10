@@ -1,4 +1,4 @@
-"""Forge (Gen 2) — a Hugging Face-powered, downloadable file workspace."""
+"""Forge (Gen 2) — an Ollama Cloud-powered, downloadable file workspace."""
 import base64
 import io
 import json
@@ -22,19 +22,22 @@ app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
 WORKSPACES = Path(os.environ.get("WORKSPACE_DIR", "data/workspaces"))
 WORKSPACES.mkdir(parents=True, exist_ok=True)
 
-# Single server-side token — set HF_TOKEN in the environment before running.
-# Get a free token at https://huggingface.co/settings/tokens (read access is enough).
-HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
-HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
+# Single server-side token for Ollama Cloud (https://ollama.com). Falls back
+# to the key provided at setup time so this runs out of the box; override by
+# setting OLLAMA_API_KEY in the environment (preferred for anything but a
+# quick local test, since env vars don't end up committed to source control).
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "38a2805ec9ba40abb2cfbece6d81b664.fcj4jrAZ0Vz8FVPPU3OF3joq").strip()
+# Ollama Cloud uses its native /api/chat shape, not the OpenAI-style /v1 route.
+OLLAMA_CHAT_URL = "https://ollama.com/api/chat"
 
-# Curated, ungated models known to work well on HF's free serverless Inference
-# Providers tier. Qwen2.5-7B-Instruct is the default: strong instruction
-# following and code generation for a model this small, and free/ungated.
+# Ollama Cloud's hosted catalogue. gpt-oss:20b is the default: it's a strong,
+# fast open-weight instruction/coding model sized to run well on the cloud
+# tier without the latency of the much larger 120b/671b models below.
 MODELS = [
-    {"id": "Qwen/Qwen2.5-7B-Instruct", "name": "Qwen2.5 7B Instruct", "family": "Qwen", "tag": "Free · recommended · code & general"},
-    {"id": "mistralai/Mistral-7B-Instruct-v0.3", "name": "Mistral 7B Instruct v0.3", "family": "Mistral", "tag": "Free · general purpose"},
-    {"id": "microsoft/Phi-3.5-mini-instruct", "name": "Phi-3.5 Mini Instruct", "family": "Microsoft", "tag": "Free · fast & small"},
-    {"id": "HuggingFaceH4/zephyr-7b-beta", "name": "Zephyr 7B Beta", "family": "HuggingFace H4", "tag": "Free · chat tuned"},
+    {"id": "gpt-oss:20b", "name": "GPT-OSS 20B", "family": "OpenAI OSS", "tag": "Recommended · fast & capable"},
+    {"id": "gpt-oss:120b", "name": "GPT-OSS 120B", "family": "OpenAI OSS", "tag": "Larger · slower · stronger reasoning"},
+    {"id": "qwen3:32b", "name": "Qwen3 32B", "family": "Qwen", "tag": "Strong general & code"},
+    {"id": "deepseek-v3.1:671b", "name": "DeepSeek V3.1 671B", "family": "DeepSeek", "tag": "Largest · slowest · frontier-scale"},
 ]
 DEFAULT_MODEL = MODELS[0]["id"]
 
@@ -119,26 +122,29 @@ def models():
 
 @app.post("/api/chat")
 def chat():
-    if not HF_TOKEN:
-        return jsonify(error="Forge isn't configured yet: set the HF_TOKEN environment variable on the server to a free Hugging Face access token (huggingface.co/settings/tokens), then restart."), 500
+    if not OLLAMA_API_KEY:
+        return jsonify(error="Forge isn't configured yet: set the OLLAMA_API_KEY environment variable on the server to an Ollama Cloud API key (ollama.com/settings/keys), then restart."), 500
     data = request.get_json(force=True); prompt = str(data.get("prompt", "")).strip()
     if not prompt: return jsonify(error="Enter a request."), 400
     messages = [{"role":"system","content":SYSTEM}] + data.get("history", [])[-10:] + [{"role":"user","content":prompt}]
     model_id = data.get("model") or DEFAULT_MODEL
-    # The free serverless tier can be slow/rate-limited and doesn't reliably
-    # honor a JSON response_format across providers, so we rely on the system
-    # prompt plus decode_model_result's fallback parsing instead.
-    payload = {"model": model_id, "messages": messages, "temperature": 0.35, "max_tokens": 4096}
+    # Ollama's native /api/chat shape differs from OpenAI-style APIs: no
+    # response_format, generation options nest under "options", and a
+    # non-streaming call needs "stream": false or it returns line-delimited
+    # JSON chunks instead of one object.
+    payload = {"model": model_id, "messages": messages, "stream": False, "options": {"temperature": 0.35, "num_predict": 4096}}
     try:
-        response = requests.post(HF_ROUTER_URL, headers={"Authorization": f"Bearer {HF_TOKEN}"}, json=payload, timeout=120)
+        response = requests.post(OLLAMA_CHAT_URL, headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"}, json=payload, timeout=180)
+        if response.status_code == 401:
+            return jsonify(error="Ollama Cloud rejected the API key. Check OLLAMA_API_KEY on the server."), 502
         if response.status_code == 429:
-            return jsonify(error=f"{model_id} is rate-limited on Hugging Face's free tier right now. Wait a bit or switch models."), 502
-        response.raise_for_status(); body = response.json(); choice = body["choices"][0]
-        if choice.get("finish_reason") == "length":
-            # The model hit max_tokens and cut off mid-generation. Surfacing this
-            # explicitly is clearer than showing the user a silently truncated reply.
+            return jsonify(error=f"{model_id} is rate-limited on Ollama Cloud right now. Wait a bit or switch models."), 502
+        response.raise_for_status(); body = response.json()
+        if body.get("done") and body.get("done_reason") == "length":
+            # The model hit num_predict and cut off mid-generation. Surfacing
+            # this explicitly is clearer than showing a silently truncated reply.
             return jsonify(error="The model ran out of room before finishing its response. Try a shorter request, break it into steps, or switch to a different model."), 502
-        result = decode_model_result(choice["message"]["content"])
+        result = decode_model_result(body["message"]["content"])
         files = result.get("files", [])[:12]; workspace_id = uuid.uuid4().hex; root = WORKSPACES / workspace_id; root.mkdir()
         for item in files: write_artifact(root, item)
         manifest = [{"path":str(p.relative_to(root)).replace("\\", "/"), "bytes":p.stat().st_size} for p in root.rglob("*") if p.is_file()]
@@ -146,7 +152,7 @@ def chat():
     except requests.HTTPError as error:
         # The provider message is useful to the owner but must never include request headers/tokens.
         detail = error.response.text[:500] if error.response is not None else str(error)
-        return jsonify(error=f"Hugging Face rejected this request ({error.response.status_code}). {detail}"), 502
+        return jsonify(error=f"Ollama Cloud rejected this request ({error.response.status_code}). {detail}"), 502
     except (requests.RequestException, KeyError, IndexError, json.JSONDecodeError, ValueError) as error:
         return jsonify(error=f"Generation failed: {error}"), 502
 

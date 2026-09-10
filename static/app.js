@@ -1,5 +1,5 @@
 const state = {
-  model: 'Qwen/Qwen2.5-7B-Instruct',
+  model: 'gpt-oss:20b',
   history: []
 };
 const $ = s => document.querySelector(s);
