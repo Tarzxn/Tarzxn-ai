@@ -1,7 +1,64 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Forge</title><link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"></head>
-<body><aside><div class="brand"><span>✦</span> Forge</div><button class="new" id="newChat">＋ New build</button><p class="label">RECENT</p><div id="recent"><button class="history active">Artifact workspace</button></div><div class="sidebar-foot">OpenRouter connected<br><small>Files stay in this workspace.</small></div></aside>
-<main><header><button class="model" id="modelButton"><span class="orb">✧</span><span id="modelName">Free Models Router</span><span>⌄</span></button><div class="model-menu" id="modelMenu"><div class="menu-title">Choose a model <small>Free models first · Meta Llama + Poolside included</small></div><div id="models"></div></div><button class="key-button" id="keyButton">API key</button></header>
-<div class="key-modal" id="keyModal"><div class="key-card"><button class="close" id="closeKey">×</button><h2>OpenRouter API key</h2><p>Used only for this browser session. Forge does not save it to its server or ZIP.</p><input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-v1-…"><button id="saveKey">Use this key</button></div></div>
-<section id="conversation"><div class="hero" id="hero"><div class="hero-mark">✦</div><h1>What will you create?</h1><p>Build complete projects and downloadable files with one prompt.</p><div class="suggestions"><button>Build a polished portfolio website</button><button>Create a sales presentation</button><button>Design a printable 3D model</button><button>Generate a Python automation</button></div></div></section>
-<div class="composer-wrap"><form id="composer"><textarea id="prompt" rows="1" placeholder="Message Forge…"></textarea><div class="composer-actions"><span>Files, code, documents, slides, spreadsheets, STL, and more</span><button id="send" type="submit" aria-label="Send">↑</button></div></form><p class="notice">Forge can make mistakes. Review generated files before using them.</p></div></main><script src="{{ url_for('static', filename='app.js') }}"></script></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Forge</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+<aside>
+  <div class="brand"><span class="brand-mark">▣</span> Forge</div>
+  <button class="new" id="newChat"><span>＋</span> New task</button>
+  <p class="label">RECENT</p>
+  <div id="recent"><button class="history active">Current workspace</button></div>
+  <div class="sidebar-foot">OpenRouter connected<br><small>Files stay in this workspace.</small></div>
+</aside>
+<main>
+  <header>
+    <button class="model" id="modelButton"><span class="orb">◆</span><span id="modelName">Free Models Router</span><span class="chev">⌄</span></button>
+    <div class="model-menu" id="modelMenu">
+      <div class="menu-title">Choose a model <small>Free models first · Meta Llama + Poolside included</small></div>
+      <div id="models"></div>
+    </div>
+    <button class="key-button" id="keyButton">API key</button>
+  </header>
+
+  <div class="key-modal" id="keyModal">
+    <div class="key-card">
+      <button class="close" id="closeKey">×</button>
+      <h2>OpenRouter API key</h2>
+      <p>Used only for this browser session. Forge does not save it to its server or ZIP.</p>
+      <input id="apiKey" type="password" autocomplete="off" placeholder="sk-or-v1-…">
+      <button id="saveKey">Use this key</button>
+    </div>
+  </div>
+
+  <section id="conversation">
+    <div class="hero" id="hero">
+      <div class="hero-mark">▣</div>
+      <h1>What will you create?</h1>
+      <p>Build complete projects and downloadable files with one prompt.</p>
+      <div class="suggestions">
+        <button>Build a polished portfolio website</button>
+        <button>Create a sales presentation</button>
+        <button>Design a printable 3D model</button>
+        <button>Generate a Python automation</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="composer-wrap">
+    <form id="composer">
+      <textarea id="prompt" rows="1" placeholder="Message Forge… (Enter to send, Shift+Enter for a new line)"></textarea>
+      <div class="composer-actions">
+        <span>Files, code, documents, slides, spreadsheets, STL, and more</span>
+        <button id="send" type="submit" aria-label="Send">↑</button>
+      </div>
+    </form>
+    <p class="notice">Forge can make mistakes. Review generated files before using them. Press Enter to send, Shift+Enter for a new line.</p>
+  </div>
+</main>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -159,4 +159,18 @@ def download(workspace_id):
     return send_file(payload, as_attachment=True, download_name=f"forge-{workspace_id[:8]}.zip", mimetype="application/zip")
 
 
+@app.get("/api/download/<workspace_id>/<path:filename>")
+def download_single(workspace_id, filename):
+    if not re.fullmatch(r"[a-f0-9]{32}", workspace_id): abort(404)
+    root = WORKSPACES / workspace_id
+    if not root.is_dir(): abort(404)
+    try:
+        target = (root / safe_path(filename)).resolve()
+    except ValueError:
+        abort(404)
+    root_resolved = root.resolve()
+    if root_resolved not in target.parents or not target.is_file(): abort(404)
+    return send_file(target, as_attachment=True, download_name=target.name)
+
+
 if __name__ == "__main__": app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
