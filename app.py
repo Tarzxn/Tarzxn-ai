@@ -8,6 +8,7 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 import requests
 from flask import Flask, abort, jsonify, render_template, request, send_file
@@ -23,9 +24,8 @@ WORKSPACES = Path(os.environ.get("WORKSPACE_DIR", "data/workspaces"))
 WORKSPACES.mkdir(parents=True, exist_ok=True)
 
 FALLBACK_MODELS = [
-    {"id": "~openai/gpt-latest", "name": "GPT Latest", "family": "OpenAI", "tag": "Paid · maintained alias"},
-    {"id": "~anthropic/claude-sonnet-latest", "name": "Claude Sonnet Latest", "family": "Anthropic", "tag": "Paid · maintained alias"},
-    {"id": "~google/gemini-pro-latest", "name": "Gemini Pro Latest", "family": "Google", "tag": "Paid · maintained alias"},
+    {"id": "openrouter/free", "name": "Free Models Router", "family": "OpenRouter", "tag": "Free · automatic routing", "source": "openrouter"},
+    {"id": "poolside/laguna-s-2.1:free", "name": "Poolside Laguna S 2.1", "family": "Poolside", "tag": "Free · coding", "source": "openrouter"},
 ]
 
 SYSTEM = '''You are Forge, an expert software and artifact builder. Turn the request into a concise response plus files. Return ONLY valid JSON using this schema:
@@ -83,29 +83,54 @@ def index(): return render_template("index.html")
 
 @app.get("/api/models")
 def models():
+    output = [{"id": "openrouter/free", "name": "Free Models Router", "family": "OpenRouter", "tag": "Free · automatic routing", "source": "openrouter"}]
     try:
         response = requests.get("https://openrouter.ai/api/v1/models", timeout=8)
         response.raise_for_status()
-        preferred = [m for m in response.json()["data"] if m["id"].split("/")[0] in {"openai","anthropic","google","deepseek","qwen"} and "text" in m.get("architecture",{}).get("output_modalities",["text"])]
+        preferred = [m for m in response.json()["data"] if "text" in m.get("architecture",{}).get("output_modalities",["text"]) and (is_free(m) or m["id"].startswith("poolside/"))]
         def price_tag(model):
             pricing = model.get("pricing", {})
             values = [pricing.get(field, "0") for field in ("prompt", "completion", "request")]
             return "Free" if all(str(value) in ("0", "0.0", "0.00") for value in values) else "Paid"
-        return jsonify([{ "id":m["id"], "name":m["name"], "family":m["id"].split("/")[0].title(), "tag":f"{price_tag(m)} · {m.get('context_length',0)//1000}K context"} for m in preferred[:80]])
-    except requests.RequestException: return jsonify(FALLBACK_MODELS)
+        output.extend([{ "id":m["id"], "name":m["name"], "family":m["id"].split("/")[0].title(), "tag":f"{price_tag(m)} · {m.get('context_length',0)//1000}K context", "source":"openrouter"} for m in preferred[:120]])
+    except requests.RequestException: output.extend(FALLBACK_MODELS[1:])
+    ollama_url = request.args.get("ollama_url", "").rstrip("/")
+    if valid_ollama_url(ollama_url):
+        try:
+            ollama = requests.get(f"{ollama_url}/api/tags", timeout=3).json().get("models", [])
+            output.extend({"id": model["name"], "name": model["name"], "family": "Ollama", "tag": "Local · free", "source": "ollama"} for model in ollama)
+        except requests.RequestException: pass
+    return jsonify(output)
+
+
+def is_free(model):
+    pricing = model.get("pricing", {})
+    return all(str(pricing.get(field, "0")) in ("0", "0.0", "0.00") for field in ("prompt", "completion", "request"))
+
+
+def valid_ollama_url(value):
+    parsed = urlparse(value)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc) and len(value) < 200
 
 
 @app.post("/api/chat")
 def chat():
     data = request.get_json(force=True); prompt = str(data.get("prompt", "")).strip()
     if not prompt: return jsonify(error="Enter a request."), 400
+    source = data.get("source", "openrouter")
     key = str(data.get("apiKey", "")).strip()
-    if not key: return jsonify(error="Add your OpenRouter API key with the API key button."), 400
+    if source == "openrouter" and not key: return jsonify(error="Add your OpenRouter API key with the API key button."), 400
     messages = [{"role":"system","content":SYSTEM}] + data.get("history", [])[-10:] + [{"role":"user","content":prompt}]
     payload = {"model": data.get("model") or FALLBACK_MODELS[0]["id"], "messages": messages, "temperature": 0.35, "response_format":{"type":"json_object"}}
     try:
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization":f"Bearer {key}","HTTP-Referer":request.host_url,"X-Title":"Forge"}, json=payload, timeout=120)
-        response.raise_for_status(); result = json.loads(response.json()["choices"][0]["message"]["content"])
+        if source == "ollama":
+            ollama_url = str(data.get("ollamaUrl", "")).rstrip("/")
+            if not valid_ollama_url(ollama_url): return jsonify(error="Enter a valid Ollama server URL."), 400
+            response = requests.post(f"{ollama_url}/api/chat", json={"model": payload["model"], "messages": messages, "stream": False, "format": "json"}, timeout=120)
+            response.raise_for_status(); result = json.loads(response.json()["message"]["content"])
+        else:
+            response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization":f"Bearer {key}","HTTP-Referer":request.host_url,"X-Title":"Forge"}, json=payload, timeout=120)
+            response.raise_for_status(); result = json.loads(response.json()["choices"][0]["message"]["content"])
         files = result.get("files", [])[:12]; workspace_id = uuid.uuid4().hex; root = WORKSPACES / workspace_id; root.mkdir()
         for item in files: write_artifact(root, item)
         manifest = [{"path":str(p.relative_to(root)).replace("\\", "/"), "bytes":p.stat().st_size} for p in root.rglob("*") if p.is_file()]

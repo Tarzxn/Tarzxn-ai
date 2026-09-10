@@ -17,7 +17,11 @@ The server natively produces Python/code and text files, `.docx`, `.xlsx`, `.ppt
 
 Push this directory to a Git repository and create a Render Blueprint from it (or create a Python Web Service with the commands in `render.yaml`). No API-key environment variable is required: each user adds their own key through the interface for their current browser session. Render’s local disk is ephemeral, which is appropriate here because ZIP workspaces are intended for immediate download.
 
-The model picker loads OpenRouter's live model catalogue and provides a curated fallback if it is unavailable.
+The model picker loads OpenRouter's live catalogue with free models first. The default **Free Models Router** (`openrouter/free`) automatically chooses a currently available free model. Paid models are omitted except for Poolside, which is included at the user's request and labelled accurately. The live list also includes Poolside's free variants when available.
+
+## Ollama
+
+Add an Ollama server URL in **Connections** to list and run its installed models, which are labelled `Local · free`. The URL must be reachable from the Flask server—not merely from your browser. `http://localhost:11434` works when Forge and Ollama run on the same computer. A Render deployment cannot reach Ollama running only on your home computer; use a securely hosted Ollama server reachable by the Render service instead.
 
 ## Security and privacy
 
