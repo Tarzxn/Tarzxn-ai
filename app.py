@@ -1,4 +1,4 @@
-"""Forge — an OpenRouter-powered, downloadable file workspace."""
+"""Forge (Gen 2) — a Hugging Face-powered, downloadable file workspace."""
 import base64
 import io
 import json
@@ -22,15 +22,26 @@ app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
 WORKSPACES = Path(os.environ.get("WORKSPACE_DIR", "data/workspaces"))
 WORKSPACES.mkdir(parents=True, exist_ok=True)
 
-FALLBACK_MODELS = [
-    {"id": "openrouter/free", "name": "Free Models Router", "family": "OpenRouter", "tag": "Free · automatic routing", "source": "openrouter"},
-    {"id": "meta-llama/llama-3.2-3b-instruct:free", "name": "Llama 3.2 3B Instruct", "family": "Meta Llama", "tag": "Free · OpenRouter", "source": "openrouter"},
-    {"id": "poolside/laguna-s-2.1:free", "name": "Poolside Laguna S 2.1", "family": "Poolside", "tag": "Free · coding", "source": "openrouter"},
-]
+# Single server-side token — set HF_TOKEN in the environment before running.
+# Get a free token at https://huggingface.co/settings/tokens (read access is enough).
+HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
+HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
 
-SYSTEM = '''You are Forge, an expert software and artifact builder. Turn the request into a concise response plus files. Return ONLY valid JSON using this schema:
+# Curated, ungated models known to work well on HF's free serverless Inference
+# Providers tier. Qwen2.5-7B-Instruct is the default: strong instruction
+# following and code generation for a model this small, and free/ungated.
+MODELS = [
+    {"id": "Qwen/Qwen2.5-7B-Instruct", "name": "Qwen2.5 7B Instruct", "family": "Qwen", "tag": "Free · recommended · code & general"},
+    {"id": "mistralai/Mistral-7B-Instruct-v0.3", "name": "Mistral 7B Instruct v0.3", "family": "Mistral", "tag": "Free · general purpose"},
+    {"id": "microsoft/Phi-3.5-mini-instruct", "name": "Phi-3.5 Mini Instruct", "family": "Microsoft", "tag": "Free · fast & small"},
+    {"id": "HuggingFaceH4/zephyr-7b-beta", "name": "Zephyr 7B Beta", "family": "HuggingFace H4", "tag": "Free · chat tuned"},
+]
+DEFAULT_MODEL = MODELS[0]["id"]
+
+SYSTEM = '''You are Forge, an expert software and artifact builder. Turn the request into a concise response plus files. Respond with ONLY valid JSON, no prose before or after it, no markdown code fences, using this schema:
 {"reply":"short helpful Markdown response","files":[{"path":"safe relative filename.ext","kind":"text|docx|xlsx|pptx|pdf|stl|base64","content":"content for artifact"}]}
-Create useful, complete files. Use text for code, HTML, CSS, JSON, CSV, SVG, Markdown and arbitrary plain text. For docx/pdf use paragraphs separated by blank lines. For xlsx use JSON rows like [["Header"],["value"]]. For pptx use JSON slides like [{"title":"...","body":"..."}]. For stl use a JSON shape: {"shape":"cube|pyramid","size":20}; use base64 only for true binary payloads. Never use absolute paths, traversal, or more than 12 files.'''
+Create useful, complete files. Use text for code, HTML, CSS, JSON, CSV, SVG, Markdown and arbitrary plain text. For docx/pdf use paragraphs separated by blank lines. For xlsx use JSON rows like [["Header"],["value"]]. For pptx use JSON slides like [{"title":"...","body":"..."}]. For stl use a JSON shape: {"shape":"cube|pyramid","size":20}; use base64 only for true binary payloads. If the request only needs a text answer, return an empty files list. Never use absolute paths, traversal, or more than 12 files.'''
+
 
 
 def decode_model_result(content):
@@ -103,39 +114,25 @@ def index(): return render_template("index.html")
 
 @app.get("/api/models")
 def models():
-    output = [{"id": "openrouter/free", "name": "Free Models Router", "family": "OpenRouter", "tag": "Free · automatic routing", "source": "openrouter"}]
-    try:
-        response = requests.get("https://openrouter.ai/api/v1/models", timeout=8)
-        response.raise_for_status()
-        preferred = [m for m in response.json()["data"] if "text" in m.get("architecture",{}).get("output_modalities",["text"]) and (is_free(m) or m["id"].startswith("poolside/"))]
-        def price_tag(model):
-            pricing = model.get("pricing", {})
-            values = [pricing.get(field, "0") for field in ("prompt", "completion", "request")]
-            return "Free" if all(str(value) in ("0", "0.0", "0.00") for value in values) else "Paid"
-        preferred.sort(key=lambda m: (not m["id"].startswith("meta-llama/"), not m["id"].startswith("poolside/"), m["name"]))
-        output.extend([{ "id":m["id"], "name":m["name"], "family":"Meta Llama" if m["id"].startswith("meta-llama/") else m["id"].split("/")[0].title(), "tag":f"{price_tag(m)} · {m.get('context_length',0)//1000}K context", "source":"openrouter"} for m in preferred[:120]])
-    except requests.RequestException: output.extend(FALLBACK_MODELS[1:])
-    return jsonify(output)
-
-
-def is_free(model):
-    pricing = model.get("pricing", {})
-    return all(str(pricing.get(field, "0")) in ("0", "0.0", "0.00") for field in ("prompt", "completion", "request"))
+    return jsonify(MODELS)
 
 
 @app.post("/api/chat")
 def chat():
+    if not HF_TOKEN:
+        return jsonify(error="Forge isn't configured yet: set the HF_TOKEN environment variable on the server to a free Hugging Face access token (huggingface.co/settings/tokens), then restart."), 500
     data = request.get_json(force=True); prompt = str(data.get("prompt", "")).strip()
     if not prompt: return jsonify(error="Enter a request."), 400
-    key = str(data.get("apiKey", "")).strip()
-    if not key: return jsonify(error="Add your OpenRouter API key with the API key button."), 400
     messages = [{"role":"system","content":SYSTEM}] + data.get("history", [])[-10:] + [{"role":"user","content":prompt}]
-    # Free models often default to a small max_tokens on OpenRouter, which
-    # truncates the JSON mid-stream and makes replies look like they "stop
-    # loading" partway through. Set an explicit, generous ceiling instead.
-    payload = {"model": data.get("model") or FALLBACK_MODELS[0]["id"], "messages": messages, "temperature": 0.35, "max_tokens": 8000, "response_format":{"type":"json_object"}}
+    model_id = data.get("model") or DEFAULT_MODEL
+    # The free serverless tier can be slow/rate-limited and doesn't reliably
+    # honor a JSON response_format across providers, so we rely on the system
+    # prompt plus decode_model_result's fallback parsing instead.
+    payload = {"model": model_id, "messages": messages, "temperature": 0.35, "max_tokens": 4096}
     try:
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization":f"Bearer {key}","HTTP-Referer":request.host_url,"X-Title":"Forge"}, json=payload, timeout=120)
+        response = requests.post(HF_ROUTER_URL, headers={"Authorization": f"Bearer {HF_TOKEN}"}, json=payload, timeout=120)
+        if response.status_code == 429:
+            return jsonify(error=f"{model_id} is rate-limited on Hugging Face's free tier right now. Wait a bit or switch models."), 502
         response.raise_for_status(); body = response.json(); choice = body["choices"][0]
         if choice.get("finish_reason") == "length":
             # The model hit max_tokens and cut off mid-generation. Surfacing this
@@ -147,10 +144,10 @@ def chat():
         manifest = [{"path":str(p.relative_to(root)).replace("\\", "/"), "bytes":p.stat().st_size} for p in root.rglob("*") if p.is_file()]
         return jsonify(reply=result.get("reply", "Done."), workspace=workspace_id, files=manifest)
     except requests.HTTPError as error:
-        # The provider message is useful to the owner but must never include request headers/API keys.
+        # The provider message is useful to the owner but must never include request headers/tokens.
         detail = error.response.text[:500] if error.response is not None else str(error)
-        return jsonify(error=f"OpenRouter rejected this request ({error.response.status_code}). {detail}"), 502
-    except (requests.RequestException, KeyError, json.JSONDecodeError, ValueError) as error:
+        return jsonify(error=f"Hugging Face rejected this request ({error.response.status_code}). {detail}"), 502
+    except (requests.RequestException, KeyError, IndexError, json.JSONDecodeError, ValueError) as error:
         return jsonify(error=f"Generation failed: {error}"), 502
 
 

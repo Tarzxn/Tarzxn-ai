@@ -1,24 +1,31 @@
-# Forge
+# Forge (Gen 2)
 
-Forge is a Flask-based AI build workspace: choose an OpenRouter model, describe what to create, then download the generated workspace as a ZIP. It presents a familiar ChatGPT-style chat surface with a Codex-like model picker.
+Forge is a Flask-based AI build workspace: describe what to create, then download the generated workspace as a ZIP. It presents a ChatGPT-style chat surface with a Codex-like model picker. Gen 2 runs entirely on Hugging Face's free serverless Inference Providers, using a single server-side token instead of a per-user API key.
 
 ## Artifact support
 
-The server natively produces Python/code and text files, `.docx`, `.xlsx`, `.pptx`, `.pdf`, and ASCII `.stl` (cube and pyramid starter geometry). The model may also return safe base64 payloads for any other file extension. All generated paths are restricted to a per-request workspace and delivered in a ZIP.
+The server natively produces Python/code and text files, `.docx`, `.xlsx`, `.pptx`, `.pdf`, and ASCII `.stl` (cube and pyramid starter geometry). The model may also return safe base64 payloads for any other file extension. Plain-text answers with no files are shown as ordinary chat replies. All generated paths are restricted to a per-request workspace and delivered as a ZIP, with individual files also downloadable on their own.
+
+## Models
+
+The picker offers a curated set of ungated models that work on Hugging Face's free tier:
+
+- **Qwen2.5 7B Instruct** (default) — best all-round pick for this app: strong instruction-following and code generation, ungated, and reliably available on the free tier.
+- Mistral 7B Instruct v0.3 — solid general-purpose alternative.
+- Phi-3.5 Mini Instruct — smaller and faster, useful if Qwen is rate-limited.
+- Zephyr 7B Beta — another chat-tuned fallback.
 
 ## Run locally
 
 1. Install Python 3.12+.
 2. Create a virtual environment and install dependencies: `pip install -r requirements.txt`.
-3. Run `flask --app app run` and open the displayed address.
-4. Select **API key** in the interface and paste your OpenRouter key for the current browser session.
+3. Get a free access token at https://huggingface.co/settings/tokens (read access is enough) and set it: `export HF_TOKEN=hf_...`.
+4. Run `flask --app app run` and open the displayed address. No key needs to be entered in the browser — Forge is pre-authenticated for every visitor using `HF_TOKEN`.
 
 ## Deploy to Render
 
-Push this directory to a Git repository and create a Render Blueprint from it (or create a Python Web Service with the commands in `render.yaml`). No API-key environment variable is required: each user adds their own key through the interface for their current browser session. Render’s local disk is ephemeral, which is appropriate here because ZIP workspaces are intended for immediate download.
-
-The model picker loads OpenRouter's live catalogue with free models first. The default **Free Models Router** (`openrouter/free`) automatically chooses a currently available free model. Free **Meta Llama** models are explicitly prioritised and include an offline fallback entry. Paid models are omitted except for Poolside, which is included at the user's request and labelled accurately. The live list also includes Poolside's free variants when available.
+Push this directory to a Git repository and create a Render Blueprint from it (or a Python Web Service with the commands in `render.yaml`). Set the `HF_TOKEN` environment variable in the Render dashboard — `render.yaml` declares it as a required, non-synced secret. Render's local disk is ephemeral, which is appropriate here because ZIP workspaces are intended for immediate download.
 
 ## Security and privacy
 
-The API key is held in the browser's session storage and sent over HTTPS only when a generation request is made. It is not placed in source control, the deployment ZIP, the server's environment, or the generated workspaces. Prompts and generated content are nevertheless sent to OpenRouter and the provider selected for the request, so do not enter credentials, private keys, regulated data, or sensitive files unless you have reviewed OpenRouter and the chosen provider's retention/privacy terms. Workspaces are stored only on Render's ephemeral local disk and are reachable through an unguessable 128-bit workspace ID, but they are not encrypted at rest or automatically deleted during the process lifetime.
+The Hugging Face token lives only in the server's environment (`HF_TOKEN`) — it is never sent to or stored in the browser, and every visitor shares the same server-side quota. Prompts and generated content are sent to Hugging Face and whichever inference provider serves the selected model, so do not enter credentials, private keys, regulated data, or sensitive files unless you've reviewed Hugging Face's and the relevant provider's retention/privacy terms. Workspaces are stored only on the server's ephemeral local disk and are reachable through an unguessable 128-bit workspace ID, but they are not encrypted at rest or automatically deleted during the process lifetime. Because this is a shared free tier, expect occasional 429 rate limits under heavy use — switch models or retry shortly if that happens.

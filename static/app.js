@@ -1,7 +1,6 @@
 const state = {
-  model: 'openrouter/free',
-  history: [],
-  apiKey: sessionStorage.getItem('forgeOpenRouterKey') || ''
+  model: 'Qwen/Qwen2.5-7B-Instruct',
+  history: []
 };
 const $ = s => document.querySelector(s);
 const convo = $('#conversation');
@@ -77,7 +76,6 @@ async function loadModels() {
 
 function closeMenus() {
   $('#modelMenu').classList.remove('open');
-  $('#keyModal').classList.remove('open');
 }
 
 $('#modelButton').onclick = (e) => { e.stopPropagation(); $('#modelMenu').classList.toggle('open'); };
@@ -103,22 +101,6 @@ function rebindSuggestions() {
 }
 rebindSuggestions();
 
-$('#keyButton').onclick = (e) => {
-  e.stopPropagation();
-  $('#apiKey').value = state.apiKey;
-  $('#keyModal').classList.add('open');
-  $('#apiKey').focus();
-};
-$('#closeKey').onclick = () => $('#keyModal').classList.remove('open');
-$('#keyModal').onclick = (e) => { if (e.target.id === 'keyModal') $('#keyModal').classList.remove('open'); };
-$('#saveKey').onclick = () => {
-  state.apiKey = $('#apiKey').value.trim();
-  if (state.apiKey) sessionStorage.setItem('forgeOpenRouterKey', state.apiKey);
-  else sessionStorage.removeItem('forgeOpenRouterKey');
-  $('#keyModal').classList.remove('open');
-  promptEl.focus();
-};
-
 document.addEventListener('click', closeMenus);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeMenus();
@@ -141,7 +123,6 @@ promptEl.addEventListener('keydown', (e) => {
 async function submitPrompt() {
   const prompt = promptEl.value.trim();
   if (!prompt) return;
-  if (!state.apiKey) { $('#keyButton').click(); return; }
 
   $('#hero')?.remove();
   add('user', escapeHtml(prompt));
@@ -155,7 +136,7 @@ async function submitPrompt() {
     const r = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, model: state.model, history: state.history, apiKey: state.apiKey })
+      body: JSON.stringify({ prompt, model: state.model, history: state.history })
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Request failed');

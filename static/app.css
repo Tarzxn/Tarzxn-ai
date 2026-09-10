@@ -32,14 +32,8 @@ header{height:56px;padding:10px 24px;display:flex;align-items:center;position:re
 .model-choice strong{display:block;font-size:13px}
 .model-choice small{color:var(--muted)}
 
-.key-modal{display:none;position:fixed;z-index:5;inset:0;background:#000c;align-items:center;justify-content:center}
-.key-modal.open{display:flex}
-.key-card{position:relative;width:min(420px,calc(100% - 32px));padding:22px;border:1px solid var(--border);border-radius:14px;background:var(--panel-2)}
-.key-card h2{margin:0;font-size:17px}
-.key-card p{color:var(--muted);line-height:1.5;font-size:13px}
-.key-card input{width:100%;padding:11px;border:1px solid #3a3a3a;border-radius:8px;background:#0f0f0f;color:#fff;margin:8px 0 12px;font-family:var(--mono)}
-.key-card #saveKey{background:var(--accent);color:#052b12;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}
-.close{position:absolute;right:12px;top:8px;border:0;background:none;color:var(--muted);font-size:22px;cursor:pointer}
+.key-button{cursor:default;color:#7cf29c}
+.key-button:hover{background:transparent;border-color:transparent}
 
 .hero{margin:auto;text-align:center;max-width:720px;padding:32px}
 .hero-mark{font-size:30px}
