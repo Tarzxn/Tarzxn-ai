@@ -8,7 +8,6 @@ import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlparse
 
 import requests
 from flask import Flask, abort, jsonify, render_template, request, send_file
@@ -25,12 +24,33 @@ WORKSPACES.mkdir(parents=True, exist_ok=True)
 
 FALLBACK_MODELS = [
     {"id": "openrouter/free", "name": "Free Models Router", "family": "OpenRouter", "tag": "Free · automatic routing", "source": "openrouter"},
+    {"id": "meta-llama/llama-3.2-3b-instruct:free", "name": "Llama 3.2 3B Instruct", "family": "Meta Llama", "tag": "Free · OpenRouter", "source": "openrouter"},
     {"id": "poolside/laguna-s-2.1:free", "name": "Poolside Laguna S 2.1", "family": "Poolside", "tag": "Free · coding", "source": "openrouter"},
 ]
 
 SYSTEM = '''You are Forge, an expert software and artifact builder. Turn the request into a concise response plus files. Return ONLY valid JSON using this schema:
 {"reply":"short helpful Markdown response","files":[{"path":"safe relative filename.ext","kind":"text|docx|xlsx|pptx|pdf|stl|base64","content":"content for artifact"}]}
 Create useful, complete files. Use text for code, HTML, CSS, JSON, CSV, SVG, Markdown and arbitrary plain text. For docx/pdf use paragraphs separated by blank lines. For xlsx use JSON rows like [["Header"],["value"]]. For pptx use JSON slides like [{"title":"...","body":"..."}]. For stl use a JSON shape: {"shape":"cube|pyramid","size":20}; use base64 only for true binary payloads. Never use absolute paths, traversal, or more than 12 files.'''
+
+
+def decode_model_result(content):
+    """Accept strict JSON, fenced JSON, and imperfect free-model output."""
+    text = str(content or "").strip()
+    if not text:
+        raise ValueError("The selected model returned an empty response. Try another free model or retry.")
+    candidates = [text]
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    if fenced: candidates.append(fenced.group(1))
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start: candidates.append(text[start:end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict): return parsed
+        except json.JSONDecodeError:
+            continue
+    # Free models sometimes ignore structured-output instructions. Preserve their work.
+    return {"reply": "The model returned unstructured output, saved below.", "files": [{"path": "generation.md", "kind": "text", "content": text}]}
 
 
 def safe_path(value):
@@ -92,14 +112,9 @@ def models():
             pricing = model.get("pricing", {})
             values = [pricing.get(field, "0") for field in ("prompt", "completion", "request")]
             return "Free" if all(str(value) in ("0", "0.0", "0.00") for value in values) else "Paid"
-        output.extend([{ "id":m["id"], "name":m["name"], "family":m["id"].split("/")[0].title(), "tag":f"{price_tag(m)} · {m.get('context_length',0)//1000}K context", "source":"openrouter"} for m in preferred[:120]])
+        preferred.sort(key=lambda m: (not m["id"].startswith("meta-llama/"), not m["id"].startswith("poolside/"), m["name"]))
+        output.extend([{ "id":m["id"], "name":m["name"], "family":"Meta Llama" if m["id"].startswith("meta-llama/") else m["id"].split("/")[0].title(), "tag":f"{price_tag(m)} · {m.get('context_length',0)//1000}K context", "source":"openrouter"} for m in preferred[:120]])
     except requests.RequestException: output.extend(FALLBACK_MODELS[1:])
-    ollama_url = request.args.get("ollama_url", "").rstrip("/")
-    if valid_ollama_url(ollama_url):
-        try:
-            ollama = requests.get(f"{ollama_url}/api/tags", timeout=3).json().get("models", [])
-            output.extend({"id": model["name"], "name": model["name"], "family": "Ollama", "tag": "Local · free", "source": "ollama"} for model in ollama)
-        except requests.RequestException: pass
     return jsonify(output)
 
 
@@ -108,29 +123,17 @@ def is_free(model):
     return all(str(pricing.get(field, "0")) in ("0", "0.0", "0.00") for field in ("prompt", "completion", "request"))
 
 
-def valid_ollama_url(value):
-    parsed = urlparse(value)
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc) and len(value) < 200
-
-
 @app.post("/api/chat")
 def chat():
     data = request.get_json(force=True); prompt = str(data.get("prompt", "")).strip()
     if not prompt: return jsonify(error="Enter a request."), 400
-    source = data.get("source", "openrouter")
     key = str(data.get("apiKey", "")).strip()
-    if source == "openrouter" and not key: return jsonify(error="Add your OpenRouter API key with the API key button."), 400
+    if not key: return jsonify(error="Add your OpenRouter API key with the API key button."), 400
     messages = [{"role":"system","content":SYSTEM}] + data.get("history", [])[-10:] + [{"role":"user","content":prompt}]
     payload = {"model": data.get("model") or FALLBACK_MODELS[0]["id"], "messages": messages, "temperature": 0.35, "response_format":{"type":"json_object"}}
     try:
-        if source == "ollama":
-            ollama_url = str(data.get("ollamaUrl", "")).rstrip("/")
-            if not valid_ollama_url(ollama_url): return jsonify(error="Enter a valid Ollama server URL."), 400
-            response = requests.post(f"{ollama_url}/api/chat", json={"model": payload["model"], "messages": messages, "stream": False, "format": "json"}, timeout=120)
-            response.raise_for_status(); result = json.loads(response.json()["message"]["content"])
-        else:
-            response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization":f"Bearer {key}","HTTP-Referer":request.host_url,"X-Title":"Forge"}, json=payload, timeout=120)
-            response.raise_for_status(); result = json.loads(response.json()["choices"][0]["message"]["content"])
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization":f"Bearer {key}","HTTP-Referer":request.host_url,"X-Title":"Forge"}, json=payload, timeout=120)
+        response.raise_for_status(); result = decode_model_result(response.json()["choices"][0]["message"]["content"])
         files = result.get("files", [])[:12]; workspace_id = uuid.uuid4().hex; root = WORKSPACES / workspace_id; root.mkdir()
         for item in files: write_artifact(root, item)
         manifest = [{"path":str(p.relative_to(root)).replace("\\", "/"), "bytes":p.stat().st_size} for p in root.rglob("*") if p.is_file()]
