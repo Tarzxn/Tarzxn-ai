@@ -130,10 +130,18 @@ def chat():
     key = str(data.get("apiKey", "")).strip()
     if not key: return jsonify(error="Add your OpenRouter API key with the API key button."), 400
     messages = [{"role":"system","content":SYSTEM}] + data.get("history", [])[-10:] + [{"role":"user","content":prompt}]
-    payload = {"model": data.get("model") or FALLBACK_MODELS[0]["id"], "messages": messages, "temperature": 0.35, "response_format":{"type":"json_object"}}
+    # Free models often default to a small max_tokens on OpenRouter, which
+    # truncates the JSON mid-stream and makes replies look like they "stop
+    # loading" partway through. Set an explicit, generous ceiling instead.
+    payload = {"model": data.get("model") or FALLBACK_MODELS[0]["id"], "messages": messages, "temperature": 0.35, "max_tokens": 8000, "response_format":{"type":"json_object"}}
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization":f"Bearer {key}","HTTP-Referer":request.host_url,"X-Title":"Forge"}, json=payload, timeout=120)
-        response.raise_for_status(); result = decode_model_result(response.json()["choices"][0]["message"]["content"])
+        response.raise_for_status(); body = response.json(); choice = body["choices"][0]
+        if choice.get("finish_reason") == "length":
+            # The model hit max_tokens and cut off mid-generation. Surfacing this
+            # explicitly is clearer than showing the user a silently truncated reply.
+            return jsonify(error="The model ran out of room before finishing its response. Try a shorter request, break it into steps, or switch to a different model."), 502
+        result = decode_model_result(choice["message"]["content"])
         files = result.get("files", [])[:12]; workspace_id = uuid.uuid4().hex; root = WORKSPACES / workspace_id; root.mkdir()
         for item in files: write_artifact(root, item)
         manifest = [{"path":str(p.relative_to(root)).replace("\\", "/"), "bytes":p.stat().st_size} for p in root.rglob("*") if p.is_file()]
