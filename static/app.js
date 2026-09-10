@@ -138,6 +138,17 @@ async function submitPrompt() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, model: state.model, history: state.history })
     });
+
+    // A non-JSON body (HTML error page from a proxy/gateway timeout, etc.)
+    // should never surface as a raw "Unexpected token '<'" parse error.
+    const contentType = r.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const label = r.status === 504 || r.status === 502
+        ? 'The server took too long to respond (likely a slow or overloaded model). Try again, or switch to a faster model.'
+        : `Server error (HTTP ${r.status}). Try again in a moment.`;
+      throw new Error(label);
+    }
+
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Request failed');
 
