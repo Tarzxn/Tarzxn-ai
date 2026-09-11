@@ -2,11 +2,15 @@
 
 Forge is a Flask-based AI build workspace: describe what to create, then download the generated workspace as a ZIP. It presents a ChatGPT-style chat surface with a Codex-like model picker. Gen 2 runs on **Ollama Cloud** (https://ollama.com) for text/code, plus **Pollinations.ai** for images — both server-authenticated, so nothing is entered in the browser.
 
+## Look and feel
+
+The UI uses a "liquid glass" style: translucent, blurred panels (sidebar, header, composer, message bubbles, code blocks, file cards) floating over an animated, colorful blurred backdrop, each with a soft specular highlight along its top edge.
+
 ## What it can build
 
 - Code and text files, `.docx`, `.xlsx`, `.pptx`, `.pdf`.
 - **Images** — raster PNG/JPG via a free, keyless call to Pollinations.ai (the model writes an image prompt, Forge renders and saves it), or vector `.svg` written directly as text. Generated images and SVGs get an inline thumbnail gallery in chat, not just a download link.
-- **3D models (.stl)** — built by Forge itself from a small, safe set of parametric primitives (cube, pyramid, sphere, cylinder, cone) with position offsets, so the model can compose several primitives into one compound shape (e.g. a cylinder + cone + sphere for a rocket) instead of hand-rolling raw, error-prone vertex lists.
+- **3D models (.stl)** — the model writes a small build *program*: a design "plan" plus an ordered list of steps ("ops") using primitives (box, sphere, cylinder, cone, torus, pyramid) with position/rotation/scale, and a `repeat` step for radial or linear patterns (gear teeth, table legs, fence posts, fins). Forge parses and executes that program itself rather than trusting hand-rolled vertex lists, so geometry is always valid, and compound, multi-part designs (not just one bare primitive) are the default.
 - Arbitrary base64 binary payloads for anything else.
 - Plain-text answers with no files render as ordinary chat replies.
 

@@ -55,7 +55,18 @@ SYSTEM = '''You are Forge, an expert software and artifact builder. Turn the req
 Create useful, complete files. Use text for code, HTML, CSS, JSON, CSV, SVG (vector images), Markdown and arbitrary plain text.
 For docx/pdf use paragraphs separated by blank lines. For xlsx use JSON rows like [["Header"],["value"]]. For pptx use JSON slides like [{"title":"...","body":"..."}].
 For a raster/photographic image, use kind "image" with a .png/.jpg path; content must be ONLY a vivid, detailed English image-generation prompt describing the picture (no JSON, no extra commentary) — it is rendered by an external image model.
-For a 3D model, use kind "stl" with a .stl path; content is JSON: {"shapes":[{"shape":"cube|pyramid|sphere|cylinder|cone","size":20,"radius":10,"height":20,"segments":16,"position":[x,y,z]}]}. Combine multiple primitives with different "position" offsets to build compound models (e.g. a cylinder body plus a cone nose plus a sphere tip for a rocket). "size" sets cube/pyramid edge length; "radius"/"height" apply to sphere/cylinder/cone; "segments" (8-48) controls roundness. Favor a handful of well-placed primitives over one.
+
+For a 3D model, use kind "stl" with a .stl path. content is JSON describing a short BUILD PROGRAM that Forge parses and executes step by step — you are writing code, not drawing:
+{"plan":"1-2 sentences: what real-world parts does this object have, and how do they connect?","ops":[
+  {"op":"add","shape":"box|sphere|cylinder|cone|torus|pyramid","size":20,"radius":10,"height":20,"tube":4,"segments":16,"position":[x,y,z],"rotation":[rx,ry,rz],"scale":[sx,sy,sz]},
+  {"op":"repeat","count":6,"rotate":[0,0,60],"around":[0,0,0]}
+]}
+Always write "plan" first and actually design the object as distinct parts before listing ops — do not default to one bare primitive.
+Shape params: "box" size is [w,d,h] (or one number for a cube); "sphere"/"cylinder"/"cone" use "radius" (+"height" for cylinder/cone); "torus" uses "radius" (ring radius) and "tube" (tube thickness); "pyramid" uses "size" (+optional "height"). "segments" (8-48) controls roundness, default 16.
+Every shape is built centered on its own origin, then: scaled by "scale" [sx,sy,sz] (stretches it, e.g. a sphere into an egg or a cylinder into a plank), then rotated by "rotation" [rx,ry,rz] in degrees (X then Y then Z), then moved to "position" [x,y,z]. All optional, default no scale/rotation and position [0,0,0].
+"repeat" duplicates the shape from the immediately preceding "add" op "count"-1 more times: "rotate":[rx,ry,rz] rotates each successive copy by that many more degrees around the "around" pivot point (default world origin) — use for radial patterns like gear teeth, wheel spokes, or flower petals; "translate":[dx,dy,dz] offsets each successive copy further along that vector — use for linear patterns like fence posts, stairs, or table legs. Combine both for spirals.
+Compose real objects from several add/repeat ops (roughly 4-14 total): e.g. a table = one flat box top + 4 cylinder legs via one add plus one repeat with translate; a gear = a short cylinder body + one tooth box positioned at its edge + a 12x repeat rotating around the center; a rocket = a tall cylinder body + a cone nose on top + 3-4 fin boxes near the base via one add plus a 4x repeat rotating around the body's own axis. Keep every coordinate within roughly -200..200.
+
 Use base64 only for true binary payloads that don't fit the kinds above. If the request only needs a text answer, return an empty files list. Never use absolute paths, traversal, or more than 12 files.'''
 
 
@@ -89,34 +100,38 @@ def safe_path(value):
     return path
 
 
-# ---- Parametric solid-primitive engine for the "stl" kind -----------------
+# ---- Parametric solid-build engine for the "stl" kind ---------------------
 # Rather than trust free models to emit raw, hand-rolled vertex/face lists
-# (which are easy to get non-manifold or malformed), Forge builds geometry
-# itself from a small, safe set of parameters. This is both more reliable and
-# lets the model compose several primitives into one compound model.
-
-def _translate(tris, offset):
-    ox, oy, oz = offset
-    return [tuple((x + ox, y + oy, z + oz) for x, y, z in tri) for tri in tris]
+# (which are easy to get non-manifold or malformed), Forge exposes a small
+# instruction set — add a primitive, repeat it with a rotation/translation —
+# and executes that program itself. The model writes the build steps; Forge
+# turns them into real, valid geometry.
+MAX_TRIANGLES = 150_000  # safety cap so a runaway program can't hang the worker or produce a useless file
 
 
-def _cube_triangles(size):
-    h = size / 2
-    v = [(-h,-h,-h),(h,-h,-h),(h,h,-h),(-h,h,-h),(-h,-h,h),(h,-h,h),(h,h,h),(-h,h,h)]
+def _clamp_segments(value, lo=6, hi=48):
+    try: return max(lo, min(int(value), hi))
+    except (TypeError, ValueError): return 16
+
+
+def _box_triangles(size):
+    w, d, h = ((size, size, size) if not isinstance(size, (list, tuple)) else (list(size) + [size[0] if size else 20]*3)[:3])
+    w, d, h = float(w), float(d), float(h)
+    hw, hd, hh = w/2, d/2, h/2
+    v = [(-hw,-hd,-hh),(hw,-hd,-hh),(hw,hd,-hh),(-hw,hd,-hh),(-hw,-hd,hh),(hw,-hd,hh),(hw,hd,hh),(-hw,hd,hh)]
     faces = [(0,2,1),(0,3,2),(4,5,6),(4,6,7),(0,1,5),(0,5,4),(1,2,6),(1,6,5),(2,3,7),(2,7,6),(3,0,4),(3,4,7)]
     return [(v[a], v[b], v[c]) for a, b, c in faces]
 
 
 def _pyramid_triangles(size, height=None):
-    h = size / 2; height = height if height is not None else size
-    v = [(-h,-h,0),(h,-h,0),(h,h,0),(-h,h,0),(0,0,height)]
+    h = float(size) / 2; height = float(height) if height is not None else float(size); z0, z1 = -height/2, height/2
+    v = [(-h,-h,z0),(h,-h,z0),(h,h,z0),(-h,h,z0),(0,0,z1)]
     faces = [(0,2,1),(0,3,2),(0,1,4),(1,2,4),(2,3,4),(3,0,4)]
     return [(v[a], v[b], v[c]) for a, b, c in faces]
 
 
 def _sphere_triangles(radius, segments=16):
-    segments = max(6, min(int(segments), 48))
-    stacks = max(4, segments // 2)
+    segments = _clamp_segments(segments); stacks = max(4, segments // 2)
     tris = []
     for i in range(stacks):
         lat0 = math.pi * (-0.5 + i / stacks); lat1 = math.pi * (-0.5 + (i + 1) / stacks)
@@ -124,13 +139,13 @@ def _sphere_triangles(radius, segments=16):
             lon0 = 2 * math.pi * j / segments; lon1 = 2 * math.pi * (j + 1) / segments
             def pt(lat, lon): return (radius*math.cos(lat)*math.cos(lon), radius*math.cos(lat)*math.sin(lon), radius*math.sin(lat))
             p00, p01, p10, p11 = pt(lat0,lon0), pt(lat0,lon1), pt(lat1,lon0), pt(lat1,lon1)
-            if i != 0: tris.append((p00, p11, p01))
-            if i != stacks - 1: tris.append((p00, p10, p11))
+            if i != 0: tris.append((p00, p01, p11))
+            if i != stacks - 1: tris.append((p00, p11, p10))
     return tris
 
 
 def _cylinder_triangles(radius, height, segments=16):
-    segments = max(6, min(int(segments), 48)); h = height / 2
+    segments = _clamp_segments(segments); h = height / 2
     tris = []
     for j in range(segments):
         a0, a1 = 2*math.pi*j/segments, 2*math.pi*(j+1)/segments
@@ -141,7 +156,7 @@ def _cylinder_triangles(radius, height, segments=16):
 
 
 def _cone_triangles(radius, height, segments=16):
-    segments = max(6, min(int(segments), 48)); apex = (0,0,height/2); h = height/2
+    segments = _clamp_segments(segments); apex = (0,0,height/2); h = height/2
     tris = []
     for j in range(segments):
         a0, a1 = 2*math.pi*j/segments, 2*math.pi*(j+1)/segments
@@ -151,37 +166,123 @@ def _cone_triangles(radius, height, segments=16):
     return tris
 
 
+def _torus_triangles(major_radius, tube_radius, segments=24, tube_segments=12):
+    segments = _clamp_segments(segments, 8, 48); tube_segments = _clamp_segments(tube_segments, 6, 32)
+    tris = []
+    def pt(u, v): return ((major_radius+tube_radius*math.cos(v))*math.cos(u), (major_radius+tube_radius*math.cos(v))*math.sin(u), tube_radius*math.sin(v))
+    for i in range(segments):
+        u0, u1 = 2*math.pi*i/segments, 2*math.pi*(i+1)/segments
+        for j in range(tube_segments):
+            v0, v1 = 2*math.pi*j/tube_segments, 2*math.pi*(j+1)/tube_segments
+            p00, p01, p10, p11 = pt(u0,v0), pt(u0,v1), pt(u1,v0), pt(u1,v1)
+            tris += [(p00, p10, p11), (p00, p11, p01)]
+    return tris
+
+
 def _shape_radius(s, default=10):
     if "radius" in s: return float(s["radius"])
-    if "size" in s: return float(s["size"]) / 2
+    if "size" in s and not isinstance(s["size"], (list, tuple)): return float(s["size"]) / 2
     return float(default)
 
 
-SHAPE_BUILDERS = {
-    "cube": lambda s: _cube_triangles(float(s.get("size", 20))),
-    "pyramid": lambda s: _pyramid_triangles(float(s.get("size", 20)), s.get("height")),
-    "sphere": lambda s: _sphere_triangles(_shape_radius(s), s.get("segments", 16)),
-    "cylinder": lambda s: _cylinder_triangles(_shape_radius(s), float(s.get("height", s.get("size", 20))), s.get("segments", 16)),
-    "cone": lambda s: _cone_triangles(_shape_radius(s), float(s.get("height", s.get("size", 20))), s.get("segments", 16)),
-}
+def build_local_shape(spec):
+    """Build a shape centered on its own local origin, unrotated/unscaled/unplaced."""
+    shape = spec.get("shape", "box")
+    if shape in ("box", "cube"): return _box_triangles(spec.get("size", 20))
+    if shape == "pyramid": return _pyramid_triangles(spec.get("size", 20), spec.get("height"))
+    if shape == "sphere": return _sphere_triangles(_shape_radius(spec), spec.get("segments", 16))
+    if shape == "cylinder": return _cylinder_triangles(_shape_radius(spec), float(spec.get("height", spec.get("size", 20))), spec.get("segments", 16))
+    if shape == "cone": return _cone_triangles(_shape_radius(spec), float(spec.get("height", spec.get("size", 20))), spec.get("segments", 16))
+    if shape == "torus": return _torus_triangles(float(spec.get("radius", 20)), float(spec.get("tube", spec.get("minor_radius", 5))), spec.get("segments", 24), spec.get("tube_segments", 12))
+    raise ValueError(f"Unknown shape '{shape}'")
 
 
-def build_stl_triangles(spec):
-    shapes = spec.get("shapes") if isinstance(spec, dict) and spec.get("shapes") else [spec]
-    triangles = []
-    for shape_spec in shapes[:20]:
-        builder = SHAPE_BUILDERS.get(shape_spec.get("shape", "cube"), SHAPE_BUILDERS["cube"])
-        offset = (list(shape_spec.get("position", [0, 0, 0])) + [0, 0, 0])[:3]
-        triangles += _translate(builder(shape_spec), [float(v) for v in offset])
+def _rotate_point(p, rotation_deg):
+    x, y, z = p
+    rx, ry, rz = (math.radians(v) for v in rotation_deg)
+    y, z = y*math.cos(rx)-z*math.sin(rx), y*math.sin(rx)+z*math.cos(rx)
+    x, z = x*math.cos(ry)+z*math.sin(ry), -x*math.sin(ry)+z*math.cos(ry)
+    x, y = x*math.cos(rz)-y*math.sin(rz), x*math.sin(rz)+y*math.cos(rz)
+    return (x, y, z)
+
+
+def _place_triangles(tris, scale=(1,1,1), rotation=(0,0,0), position=(0,0,0)):
+    sx, sy, sz = scale
+    out = []
+    for tri in tris:
+        placed = []
+        for (x, y, z) in tri:
+            x, y, z = x*sx, y*sy, z*sz
+            x, y, z = _rotate_point((x, y, z), rotation)
+            placed.append((x+position[0], y+position[1], z+position[2]))
+        out.append(tuple(placed))
+    return out
+
+
+def _rotate_triangles_around(tris, rotation_deg, pivot):
+    px, py, pz = pivot
+    out = []
+    for tri in tris:
+        rotated = []
+        for (x, y, z) in tri:
+            rx, ry, rz = _rotate_point((x-px, y-py, z-pz), rotation_deg)
+            rotated.append((rx+px, ry+py, rz+pz))
+        out.append(tuple(rotated))
+    return out
+
+
+def _vec3(value, default=(0.0, 0.0, 0.0)):
+    if not value: return default
+    values = list(value) + list(default)
+    return tuple(float(v) for v in values[:3])
+
+
+def run_stl_program(spec):
+    """Interpret the model's ordered build steps ("ops") into world-space
+    triangles. Supports "add" (place a primitive, optionally scaled/rotated)
+    and "repeat" (duplicate the previous add with a cumulative rotation
+    and/or translation per copy — radial or linear patterns)."""
+    ops = spec.get("ops") if isinstance(spec, dict) else None
+    if not ops:
+        # Back-compat with the earlier, simpler schemas.
+        if isinstance(spec, dict) and spec.get("shapes"): ops = [{"op": "add", **item} for item in spec["shapes"]]
+        elif isinstance(spec, dict) and spec.get("shape"): ops = [{"op": "add", **spec}]
+        else: raise ValueError("STL spec has no ops/shapes/shape to build from")
+
+    triangles, last_placed = [], None
+    for op in ops[:80]:
+        kind = op.get("op", "add")
+        if kind == "add":
+            local = build_local_shape(op)
+            placed = _place_triangles(local, _vec3(op.get("scale"), (1, 1, 1)), _vec3(op.get("rotation")), _vec3(op.get("position")))
+            triangles += placed
+            last_placed = placed
+        elif kind == "repeat" and last_placed:
+            count = max(1, min(int(op.get("count", 1)), 60))
+            translate_step, rotate_step, pivot = _vec3(op.get("translate")), _vec3(op.get("rotate")), _vec3(op.get("around"))
+            for i in range(1, count):
+                step = last_placed
+                if any(rotate_step): step = _rotate_triangles_around(step, tuple(a*i for a in rotate_step), pivot)
+                if any(translate_step):
+                    dx, dy, dz = (a*i for a in translate_step)
+                    step = [tuple((x+dx, y+dy, z+dz) for x, y, z in tri) for tri in step]
+                triangles += step
+        if len(triangles) > MAX_TRIANGLES:
+            raise ValueError("That design is too complex to build (too many triangles) — simplify it")
     if not triangles:
-        raise ValueError("STL spec produced no geometry")
+        raise ValueError("STL program produced no geometry")
     return triangles
 
 
 def render_ascii_stl(triangles):
     lines = ["solid forge"]
     for a, b, c in triangles:
-        lines += [" facet normal 0 0 0", "  outer loop"]
+        ax, ay, az = a; bx, by, bz = b; cx, cy, cz = c
+        ux, uy, uz = bx-ax, by-ay, bz-az
+        vx, vy, vz = cx-ax, cy-ay, cz-az
+        nx, ny, nz = uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx
+        length = math.sqrt(nx*nx+ny*ny+nz*nz) or 1.0
+        lines += [f" facet normal {nx/length:.6f} {ny/length:.6f} {nz/length:.6f}", "  outer loop"]
         lines += [f"   vertex {p[0]:.4f} {p[1]:.4f} {p[2]:.4f}" for p in (a, b, c)]
         lines += ["  endloop", " endfacet"]
     lines.append("endsolid forge")
@@ -225,7 +326,7 @@ def write_artifact(root, item):
         pdf.save()
     elif kind == "stl":
         spec = json.loads(content)
-        path.write_text(render_ascii_stl(build_stl_triangles(spec)), encoding="ascii")
+        path.write_text(render_ascii_stl(run_stl_program(spec)), encoding="ascii")
     else: raise ValueError(f"Unsupported artifact kind: {kind}")
 
 

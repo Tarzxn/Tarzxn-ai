@@ -18,7 +18,7 @@ function escapeHtml(t) {
 function renderReply(text) {
   const escaped = escapeHtml(text || '');
   const withBlocks = escaped.replace(/```(\w*)\n?([\s\S]*?)```/g, (m, lang, code) => {
-    return `<pre><code>${code.replace(/\n$/, '')}</code></pre>`;
+    return `<pre class="glass"><code>${code.replace(/\n$/, '')}</code></pre>`;
   });
   const withInline = withBlocks.replace(/`([^`\n]+)`/g, '<code class="inline">$1</code>');
   return `<div class="reply-text">${withInline.replace(/\n/g, '<br>')}</div>`;
@@ -52,7 +52,9 @@ function workspaceUrl(base, workspace, path) {
 
 function add(role, html) {
   const el = document.createElement('div');
-  el.className = `message ${role}`;
+  // User bubbles get the full glass treatment; assistant replies stay
+  // transparent (only their code blocks/artifact cards are glass panels).
+  el.className = `message ${role}${role === 'user' ? ' glass' : ''}`;
   el.innerHTML = html;
   convo.append(el);
   el.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -77,7 +79,7 @@ function buildArtifactHtml(data) {
       <a href="${workspaceUrl('/api/download', data.workspace, f.path)}" download>Download</a>
     </li>`).join('');
   return `
-    <div class="artifact">
+    <div class="artifact glass">
       ${gallery}
       <div class="artifact-head"><strong>${data.files.length} file${data.files.length === 1 ? '' : 's'} created</strong></div>
       <ul>${rows}</ul>

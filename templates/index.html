@@ -7,7 +7,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 <body>
-<aside>
+<div class="aurora"><span></span><span></span><span></span><span></span></div>
+<aside class="glass">
   <div class="brand"><span class="brand-mark">▣</span> Forge</div>
   <button class="new" id="newChat"><span>＋</span> New task</button>
   <p class="label">RECENT</p>
@@ -17,7 +18,7 @@
 <main>
   <header>
     <button class="model" id="modelButton"><span class="orb">◆</span><span id="modelName">GPT-OSS 20B</span><span class="chev">⌄</span></button>
-    <div class="model-menu" id="modelMenu">
+    <div class="model-menu glass" id="modelMenu">
       <div class="menu-title">Choose a model <small>Ollama Cloud hosted models</small></div>
       <div id="models"></div>
     </div>
@@ -30,19 +31,19 @@
       <h1>What will you create?</h1>
       <p>Build complete projects and downloadable files with one prompt.</p>
       <div class="suggestions">
-        <button>Build a polished portfolio website</button>
-        <button>Create a sales presentation</button>
-        <button>Generate an image of a neon cyberpunk city</button>
-        <button>Design a printable 3D model of a rocket</button>
+        <button class="glass">Build a polished portfolio website</button>
+        <button class="glass">Create a sales presentation</button>
+        <button class="glass">Generate an image of a neon cyberpunk city</button>
+        <button class="glass">Design a printable 3D model of a rocket</button>
       </div>
     </div>
   </section>
 
   <div class="composer-wrap">
-    <form id="composer">
+    <form id="composer" class="glass">
       <textarea id="prompt" rows="1" placeholder="Message Forge… (Enter to send, Shift+Enter for a new line)"></textarea>
       <div class="composer-actions">
-        <span>Files, code, documents, slides, spreadsheets, STL, and more</span>
+        <span>Files, code, documents, slides, spreadsheets, images, STL, and more</span>
         <button id="send" type="submit" aria-label="Send">↑</button>
       </div>
     </form>
