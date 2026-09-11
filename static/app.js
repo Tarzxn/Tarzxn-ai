@@ -30,6 +30,26 @@ function formatBytes(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const FILE_ICONS = {
+  '.py':'🐍', '.js':'📜', '.ts':'📜', '.html':'🌐', '.css':'🎨', '.json':'🗂️',
+  '.csv':'📊', '.md':'📝', '.txt':'📄', '.docx':'📃', '.xlsx':'📊', '.pptx':'📽️',
+  '.pdf':'📕', '.stl':'🧊', '.svg':'🖼️', '.png':'🖼️', '.jpg':'🖼️', '.jpeg':'🖼️',
+  '.webp':'🖼️', '.gif':'🖼️',
+};
+function fileIcon(path) {
+  const ext = path.slice(path.lastIndexOf('.')).toLowerCase();
+  return FILE_ICONS[ext] || '📦';
+}
+
+// Build a URL path that keeps each segment correctly percent-encoded without
+// turning the "/" separators between folders into a literal "%2F" — encoding
+// the whole path at once broke downloads/previews for any file nested in a
+// subfolder, since Flask's <path:filename> route never saw the real slash.
+function workspaceUrl(base, workspace, path) {
+  const segments = path.split('/').map(encodeURIComponent).join('/');
+  return `${base}/${workspace}/${segments}`;
+}
+
 function add(role, html) {
   const el = document.createElement('div');
   el.className = `message ${role}`;
@@ -41,14 +61,24 @@ function add(role, html) {
 
 function buildArtifactHtml(data) {
   if (!data.files || data.files.length === 0) return '';
+  const images = data.files.filter(f => f.isImage);
+  const gallery = images.length ? `
+    <div class="artifact-gallery">
+      ${images.map(f => `
+        <a href="${workspaceUrl('/api/preview', data.workspace, f.path)}" target="_blank" rel="noopener">
+          <img loading="lazy" src="${workspaceUrl('/api/preview', data.workspace, f.path)}" alt="${escapeHtml(f.path)}">
+        </a>`).join('')}
+    </div>` : '';
   const rows = data.files.map(f => `
     <li>
+      <span class="ficon">${fileIcon(f.path)}</span>
       <span class="fname">${escapeHtml(f.path)}</span>
       <span class="fbytes">${formatBytes(f.bytes)}</span>
-      <a href="/api/download/${data.workspace}/${encodeURIComponent(f.path)}" download>Download</a>
+      <a href="${workspaceUrl('/api/download', data.workspace, f.path)}" download>Download</a>
     </li>`).join('');
   return `
     <div class="artifact">
+      ${gallery}
       <div class="artifact-head"><strong>${data.files.length} file${data.files.length === 1 ? '' : 's'} created</strong></div>
       <ul>${rows}</ul>
       <a class="download-all" href="/api/download/${data.workspace}">Download all (.zip) ↓</a>
@@ -129,7 +159,7 @@ async function submitPrompt() {
   promptEl.value = '';
   autoResize();
 
-  const pending = add('assistant typing', '<div class="reply-text">Forge is working…</div>');
+  const pending = add('assistant typing', '<div class="reply-text typing-indicator"><span></span><span></span><span></span></div>');
   sendBtn.disabled = true;
 
   try {
