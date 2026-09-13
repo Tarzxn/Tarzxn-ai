@@ -8,9 +8,10 @@ The UI uses a "liquid glass" style: translucent, blurred panels (sidebar, header
 
 ## What it can build
 
-- Code and text files, `.docx`, `.xlsx`, `.pptx`, `.pdf`.
-- **Images** — raster PNG/JPG via a free, keyless call to Pollinations.ai (the model writes an image prompt, Forge renders and saves it), or vector `.svg` written directly as text. Generated images and SVGs get an inline thumbnail gallery in chat, not just a download link.
-- **3D models (.stl)** — the model writes a small build *program*: a design "plan" plus an ordered list of steps ("ops") using primitives (box, sphere, cylinder, cone, torus, pyramid) with position/rotation/scale, and a `repeat` step for radial or linear patterns (gear teeth, table legs, fence posts, fins). Forge parses and executes that program itself rather than trusting hand-rolled vertex lists, so geometry is always valid, and compound, multi-part designs (not just one bare primitive) are the default.
+- Code and text files, `.docx`, `.xlsx`, `.pptx`, `.pdf` — each with real formatting, not just plain text dumped in: `.docx`/`.pdf` understand a Markdown-lite subset (`#`/`##`/`###` headings, `- ` bullets, `**bold**`), `.xlsx` gets a bold auto-width header row with the top row frozen, and `.pptx` splits multi-line bodies into proper bullet points.
+- **Images** — raster PNG/JPG via a free, keyless call to Pollinations.ai, with optional aspect-ratio control (`square`/`portrait`/`landscape`), or vector `.svg` written directly as text. Generated images/SVGs get an inline thumbnail gallery in chat.
+- **3D models (.stl)** — a real parametric CAD-lite engine. The model writes a design "plan" plus an ordered build program ("ops") using primitives — box, sphere, cylinder, cone, torus, a genuinely hollow **tube** (pipe/ring/washer), a **capsule** (pill/rounded-rod shape with true hemispherical caps), a **wedge** (ramp/roof), and pyramid — each with position/rotation/scale, plus a `repeat` step for radial or linear patterns (gear teeth, table legs, fence posts, fins, stair treads). Segment counts auto-scale with part size for smooth curves unless the model deliberately wants a low-poly look. Every op runs independently — a malformed step is skipped with a warning instead of failing the whole model. Every shape ships tested watertight (manifold — every edge shared by exactly two triangles) with outward-facing normals.
+- **Live web research** — an optional "🔎 Web search" toggle in the composer runs the request through Tavily first and feeds the results to the model as context, so answers about current events/prices/recent releases/etc. are grounded in real, fresh sources instead of the model's training data. Off by default; only appears active if `TAVILY_API_KEY` is set on the server.
 - Arbitrary base64 binary payloads for anything else.
 - Plain-text answers with no files render as ordinary chat replies.
 
@@ -32,6 +33,10 @@ The picker offers Ollama Cloud's hosted catalogue:
 3. Forge ships with an Ollama Cloud API key already set as the default in `app.py`, so it works immediately. To use a different key, set it in the environment instead — it overrides the built-in default:
    ```
    export OLLAMA_API_KEY="<your-ollama-cloud-api-key>"
+   ```
+   Optionally enable live web search too — no default is baked in for this one, since none was provided:
+   ```
+   export TAVILY_API_KEY="<your-tavily-api-key>"
    ```
 4. Run `flask --app app run` and open the displayed address. No key needs to be entered in the browser — Forge authenticates every visitor with the server-side key. Image generation needs no key at all.
 

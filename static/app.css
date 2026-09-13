@@ -84,7 +84,11 @@ header{height:56px;padding:10px 24px;display:flex;align-items:center;position:re
 #composer{border-radius:20px;padding:10px 12px}
 #composer:focus-within{border-color:var(--accent-dim);box-shadow:0 0 0 3px var(--accent-dim), 0 1px 0 0 rgba(255,255,255,0.18) inset, 0 18px 40px -18px #000c}
 textarea{width:100%;resize:none;border:0;outline:0;background:transparent;color:#eee;font:14px var(--sans);min-height:24px;max-height:220px;line-height:1.5;padding:4px 2px}
-.composer-actions{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:11px;margin-top:4px}
+.composer-actions{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px;margin-top:4px}
+.pill-toggle{flex:0 0 auto;border:1px solid var(--glass-border-soft);background:var(--glass);color:#cfd4db;font:12px var(--sans);padding:6px 11px;border-radius:999px;cursor:pointer;transition:all .15s ease}
+.pill-toggle:hover:not(:disabled){background:var(--glass-strong)}
+.pill-toggle.active{background:linear-gradient(155deg,var(--accent),var(--accent-2));color:#04150f;border-color:rgba(255,255,255,0.4);font-weight:600}
+.pill-toggle:disabled{opacity:.4;cursor:not-allowed}
 .composer-actions button{margin-left:auto;width:32px;height:32px;border:1px solid rgba(255,255,255,0.35);border-radius:50%;font-size:18px;background:linear-gradient(155deg,var(--accent),var(--accent-2));color:#04150f;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px -4px #7cf2c488}
 .composer-actions button:disabled{opacity:.35;cursor:default;box-shadow:none}
 .notice{text-align:center;color:#6b7280;font-size:11px;margin:8px 0 0}

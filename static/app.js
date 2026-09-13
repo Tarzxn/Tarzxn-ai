@@ -1,6 +1,8 @@
 const state = {
   model: 'gpt-oss:20b',
-  history: []
+  history: [],
+  webSearch: false,
+  webSearchAvailable: false
 };
 const $ = s => document.querySelector(s);
 const convo = $('#conversation');
@@ -87,6 +89,22 @@ function buildArtifactHtml(data) {
     </div>`;
 }
 
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config');
+    const cfg = await res.json();
+    state.webSearchAvailable = !!cfg.webSearchEnabled;
+    const btn = $('#webSearchToggle');
+    if (state.webSearchAvailable) {
+      btn.disabled = false;
+      btn.title = 'Search the web before answering';
+    } else {
+      btn.disabled = true;
+      btn.title = 'Web search needs a TAVILY_API_KEY set on the server';
+    }
+  } catch (e) { /* leave the toggle disabled if config can't be reached */ }
+}
+
 async function loadModels() {
   try {
     const res = await fetch('/api/models');
@@ -112,6 +130,12 @@ function closeMenus() {
 
 $('#modelButton').onclick = (e) => { e.stopPropagation(); $('#modelMenu').classList.toggle('open'); };
 $('#modelMenu').onclick = (e) => e.stopPropagation();
+
+$('#webSearchToggle').onclick = () => {
+  if ($('#webSearchToggle').disabled) return;
+  state.webSearch = !state.webSearch;
+  $('#webSearchToggle').classList.toggle('active', state.webSearch);
+};
 
 $('#newChat').onclick = () => {
   state.history = [];
@@ -161,14 +185,14 @@ async function submitPrompt() {
   promptEl.value = '';
   autoResize();
 
-  const pending = add('assistant typing', '<div class="reply-text typing-indicator"><span></span><span></span><span></span></div>');
+  const pending = add('assistant typing', `<div class="reply-text typing-indicator"><span></span><span></span><span></span></div>${state.webSearch ? '<div class="reply-text" style="opacity:.6;font-size:12px;margin-top:2px">Searching the web, then building…</div>' : ''}`);
   sendBtn.disabled = true;
 
   try {
     const r = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, model: state.model, history: state.history })
+      body: JSON.stringify({ prompt, model: state.model, history: state.history, web_search: state.webSearch })
     });
 
     // A non-JSON body (HTML error page from a proxy/gateway timeout, etc.)
@@ -205,5 +229,6 @@ $('#composer').addEventListener('submit', (e) => {
   submitPrompt();
 });
 
+loadConfig();
 loadModels();
 autoResize();
