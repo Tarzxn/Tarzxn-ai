@@ -10,12 +10,21 @@ The UI uses a "liquid glass" style: translucent, blurred panels (sidebar, header
 
 - Code and text files, `.docx`, `.xlsx`, `.pptx`, `.pdf` — each with real formatting, not just plain text dumped in: `.docx`/`.pdf` understand a Markdown-lite subset (`#`/`##`/`###` headings, `- ` bullets, `**bold**`), `.xlsx` gets a bold auto-width header row with the top row frozen, and `.pptx` splits multi-line bodies into proper bullet points.
 - **Images** — raster PNG/JPG via a free, keyless call to Pollinations.ai, with optional aspect-ratio control (`square`/`portrait`/`landscape`), or vector `.svg` written directly as text. Generated images/SVGs get an inline thumbnail gallery in chat.
+- **Data charts** — real bar/line/pie/scatter charts rendered from actual numbers via matplotlib (not an AI-generated approximation of a chart). Distinct from "image": use this when the user wants their data plotted accurately.
 - **3D models (.stl)** — a real parametric CAD-lite engine. The model writes a design "plan" plus an ordered build program ("ops") using primitives — box, sphere, cylinder, cone, torus, a genuinely hollow **tube** (pipe/ring/washer), a **capsule** (pill/rounded-rod shape with true hemispherical caps), a **wedge** (ramp/roof), and pyramid — each with position/rotation/scale, plus a `repeat` step for radial or linear patterns (gear teeth, table legs, fence posts, fins, stair treads). Segment counts auto-scale with part size for smooth curves unless the model deliberately wants a low-poly look. Every op runs independently — a malformed step is skipped with a warning instead of failing the whole model. Every shape ships tested watertight (manifold — every edge shared by exactly two triangles) with outward-facing normals.
 - **Live web research** — an optional "🔎 Web search" toggle in the composer runs the request through Tavily first and feeds the results to the model as context, so answers about current events/prices/recent releases/etc. are grounded in real, fresh sources instead of the model's training data. Off by default; only appears active if `TAVILY_API_KEY` is set on the server.
 - Arbitrary base64 binary payloads for anything else.
 - Plain-text answers with no files render as ordinary chat replies.
 
 All generated paths are restricted to a per-request workspace and delivered as a ZIP, with individual files also downloadable (or, for images/SVGs, previewable) on their own.
+
+## Chatbot features
+
+- **Multiple persistent conversations.** Every chat is saved to the browser's `localStorage` (not the server) — the sidebar's "Recent" list lets you switch between past conversations or delete one, and your most recent conversation is restored automatically on reload. Note: this only persists the conversation transcript, not generated files — those still live on the server's ephemeral workspace disk and get pruned after 2 hours, so very old conversations' download links may stop working.
+- **Rich replies.** Assistant messages render real Markdown — headings, bulleted/numbered lists, blockquotes, links, bold/italic, and syntax-styled code blocks — instead of one flat wall of text.
+- **Stop generating.** The send button turns into a Stop button mid-request; clicking it cancels the in-flight request immediately.
+- **Regenerate.** Hover any assistant reply (not just the latest) for a "↻ Regenerate" button that drops it and everything after it, then re-asks the same prompt.
+- **Copy buttons** on both individual code blocks and whole assistant replies.
 
 ## Models
 

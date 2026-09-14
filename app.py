@@ -24,6 +24,9 @@ from openpyxl.utils import get_column_letter
 from pptx import Presentation
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+import matplotlib
+matplotlib.use("Agg")  # headless rendering — must be set before importing pyplot
+import matplotlib.pyplot as plt
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
@@ -62,13 +65,14 @@ DEFAULT_MODEL = MODELS[0]["id"]
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
 
 SYSTEM = '''You are Forge, an expert software and artifact builder. Turn the request into a concise response plus files. Respond with ONLY valid JSON, no prose before or after it, no markdown code fences, using this schema:
-{"reply":"short helpful Markdown response","files":[{"path":"safe relative filename.ext","kind":"text|docx|xlsx|pptx|pdf|stl|image|base64","content":"content for artifact"}]}
+{"reply":"short helpful Markdown response","files":[{"path":"safe relative filename.ext","kind":"text|docx|xlsx|pptx|pdf|stl|image|chart|base64","content":"content for artifact"}]}
 Create useful, complete files. Use text for code, HTML, CSS, JSON, CSV, SVG (vector images), Markdown and arbitrary plain text.
 
 For docx/pdf, content is Markdown-lite: lines starting "# "/"## "/"### " become headings, lines starting "- " become bullets, and **bold** spans are rendered bold; separate paragraphs with blank lines.
 For xlsx, content is JSON rows like [["Header1","Header2"],["value",1]] — the first row is treated as a header and gets bold styling and auto-sized columns automatically.
 For pptx, content is JSON slides like [{"title":"...","body":"one bullet per line, separated by \\n"}] — each line in "body" becomes its own bullet point.
-For a raster/photographic image, use kind "image" with a .png/.jpg path. content is either a plain English image-generation prompt, or JSON {"prompt":"...","aspect":"square|portrait|landscape"} for more control over framing — use vivid, specific, detailed prompts.
+For a raster/photographic or artistic image, use kind "image" with a .png/.jpg path. content is either a plain English image-generation prompt, or JSON {"prompt":"...","aspect":"square|portrait|landscape"} for more control over framing — use vivid, specific, detailed prompts.
+For an actual DATA chart (bar/line/pie/scatter of real numbers) rather than an artistic picture, use kind "chart" with a .png path. content is JSON: {"type":"bar|line|pie|scatter","title":"...","x_label":"...","y_label":"...","labels":["A","B","C"],"series":[{"name":"Series 1","values":[1,2,3]}]}. Use "chart" whenever the user wants to see numbers plotted — it renders a real, accurate chart from the data instead of an AI-generated approximation of one.
 
 For a 3D model, use kind "stl" with a .stl path. Take real time to think this through — you are the CAD engineer: mentally model the object as an assembly of real, distinct parts and their spatial relationships before writing anything. content is JSON describing a BUILD PROGRAM that Forge parses and executes step by step:
 {"plan":"a few sentences: what real-world parts does this object have, roughly what size is each, and how do they connect/align?","ops":[
@@ -424,6 +428,54 @@ def _apply_bold_runs(paragraph, text):
         if i % 2 == 1: run.bold = True
 
 
+CHART_COLORS = ["#2fd68f", "#3f8cf2", "#9c6bf0", "#f2b45c", "#f26b6b", "#39c6c6"]
+
+
+def render_chart(spec, path):
+    """Render a real data chart (matplotlib) — for actual data, not AI art."""
+    chart_type = str(spec.get("type", "bar")).lower()
+    labels = spec.get("labels") or []
+    series = spec.get("series") or [{"name": "Series 1", "values": spec.get("values", [])}]
+    if not series or not any(s.get("values") for s in series):
+        raise ValueError("Chart spec has no data")
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.6), dpi=150)
+    fig.patch.set_alpha(0)
+
+    if chart_type == "pie":
+        values = series[0].get("values", [])
+        ax.pie(values, labels=labels or None, autopct="%1.0f%%", colors=CHART_COLORS, textprops={"color": "#1a1a1a"})
+        ax.axis("equal")
+    elif chart_type in ("line", "scatter"):
+        x_values = labels if labels else list(range(len(series[0].get("values", []))))
+        for i, s in enumerate(series):
+            color = CHART_COLORS[i % len(CHART_COLORS)]
+            if chart_type == "line":
+                ax.plot(x_values, s.get("values", []), marker="o", label=s.get("name", f"Series {i+1}"), color=color)
+            else:
+                ax.scatter(x_values, s.get("values", []), label=s.get("name", f"Series {i+1}"), color=color)
+        if len(series) > 1: ax.legend()
+        ax.grid(alpha=0.25)
+    else:  # grouped bar (default)
+        count = len(labels) if labels else max((len(s.get("values", [])) for s in series), default=0)
+        width = 0.8 / max(1, len(series))
+        for i, s in enumerate(series):
+            xs = [j + i * width for j in range(count)]
+            ax.bar(xs, (s.get("values") or [])[:count], width=width, label=s.get("name", f"Series {i+1}"), color=CHART_COLORS[i % len(CHART_COLORS)])
+        if len(series) > 1: ax.legend()
+        offset = (len(series) - 1) * width / 2
+        ax.set_xticks([j + offset for j in range(count)])
+        ax.set_xticklabels(labels[:count] if labels else [str(j) for j in range(count)], rotation=20, ha="right")
+        ax.grid(axis="y", alpha=0.25)
+
+    if spec.get("title"): ax.set_title(str(spec["title"]))
+    if spec.get("x_label"): ax.set_xlabel(str(spec["x_label"]))
+    if spec.get("y_label"): ax.set_ylabel(str(spec["y_label"]))
+    fig.tight_layout()
+    fig.savefig(path, transparent=True)
+    plt.close(fig)
+
+
 def write_artifact(root, item):
     """Writes one artifact to disk. Returns a list of non-fatal warning
     strings (only ever populated for "stl", where a bad build step is
@@ -453,6 +505,8 @@ def write_artifact(root, item):
         if not response.headers.get("content-type", "").startswith("image/") and len(response.content) < 500:
             raise ValueError("Image generation did not return an image")
         path.write_bytes(response.content)
+    elif kind == "chart":
+        render_chart(json.loads(content), path)
     elif kind == "docx":
         # Lightweight Markdown: "#"-headings, "- " bullets, **bold** spans —
         # instead of dumping everything as identical plain paragraphs.
