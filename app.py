@@ -58,8 +58,82 @@ SESSION_TTL_SECONDS = int(os.environ.get("FORGE_SESSION_HOURS", "12")) * 3600
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 _users_lock = threading.Lock()  # gunicorn now runs with gthread workers, so concurrent requests within one process are real
 
+# Optional free persistence for accounts across redeploys on hosts (like
+# Render's free tier) that don't offer a persistent disk at all: sync
+# users.json to a private GitHub Gist instead, using a personal access token
+# you already have from having a GitHub account — no new paid service, no new
+# signup. This is layered on top of the local file, never replaces it: every
+# read/write still touches the local file too, and any GitHub failure is
+# swallowed and falls back to whatever's local, so a network hiccup or an
+# unset token never breaks login.
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+GITHUB_GIST_ID = os.environ.get("GITHUB_GIST_ID", "").strip()
+GITHUB_GIST_FILENAME = "forge_users.json"
+GITHUB_API_VERSION = "2022-11-28"
+
+
+def _github_headers():
+    return {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": GITHUB_API_VERSION}
+
+
+def _gist_load():
+    """Best-effort read from the configured gist. Returns None (never raises)
+    if sync isn't configured or the call fails, so callers fall back to the
+    local file instead."""
+    if not (GITHUB_TOKEN and GITHUB_GIST_ID): return None
+    try:
+        response = requests.get(f"https://api.github.com/gists/{GITHUB_GIST_ID}", headers=_github_headers(), timeout=10)
+        response.raise_for_status()
+        file_data = response.json().get("files", {}).get(GITHUB_GIST_FILENAME)
+        if not file_data or file_data.get("truncated"): return None
+        return json.loads(file_data["content"])
+    except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return None
+
+
+def _gist_save(users):
+    """Best-effort push to the configured gist. Never raises — a failed sync
+    just means the local file (and, until the next successful sync, whatever
+    was already in the gist) stays the source of truth instead."""
+    if not (GITHUB_TOKEN and GITHUB_GIST_ID): return
+    try:
+        requests.patch(
+            f"https://api.github.com/gists/{GITHUB_GIST_ID}",
+            headers=_github_headers(),
+            json={"files": {GITHUB_GIST_FILENAME: {"content": json.dumps(users, indent=2)}}},
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        print(f"[Forge] Warning: could not sync accounts to GitHub Gist: {error}")
+
+
+def _gist_create_if_needed():
+    """If a token is set but no gist ID, create a new private gist once and
+    print its ID. The operator needs to copy that into a GITHUB_GIST_ID env
+    var — without it, every restart would create a brand new empty gist
+    instead of reusing the same one, which defeats the point."""
+    global GITHUB_GIST_ID
+    if not GITHUB_TOKEN or GITHUB_GIST_ID: return
+    try:
+        response = requests.post(
+            "https://api.github.com/gists",
+            headers=_github_headers(),
+            json={"description": "Forge account store — do not edit by hand", "public": False,
+                  "files": {GITHUB_GIST_FILENAME: {"content": "{}"}}},
+            timeout=10,
+        )
+        response.raise_for_status()
+        GITHUB_GIST_ID = response.json()["id"]
+        print(f"[Forge] Created a private gist for account storage: {GITHUB_GIST_ID}")
+        print(f"[Forge] IMPORTANT: set GITHUB_GIST_ID={GITHUB_GIST_ID} as an env var now — "
+              f"without it, the next restart creates a new, empty gist instead of reusing this one.")
+    except (requests.RequestException, KeyError, ValueError) as error:
+        print(f"[Forge] Warning: could not create a gist for account storage: {error}. Falling back to local-file-only persistence.")
+
 
 def load_users():
+    remote = _gist_load()
+    if remote is not None: return remote
     if not USERS_FILE.exists(): return {}
     try:
         return json.loads(USERS_FILE.read_text())
@@ -70,6 +144,7 @@ def load_users():
 def save_users(users):
     USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
     USERS_FILE.write_text(json.dumps(users, indent=2))
+    _gist_save(users)
 
 
 def create_user(username, password):
@@ -91,12 +166,14 @@ def seed_admin_account():
         create_user(FORGE_USERNAME, FORGE_PASSWORD)
 
 
+_gist_create_if_needed()
 seed_admin_account()
 # A startup diagnostic, not an error: if this reads 0 accounts on every
-# restart even though people have signed up, USERS_FILE isn't actually on
-# persistent storage (e.g. a Render free-tier service with no disk attached)
-# and accounts are being silently lost on each redeploy.
-print(f"[Forge] {len(load_users())} account(s) loaded from {USERS_FILE.resolve()}")
+# restart even though people have signed up, accounts aren't actually
+# persisting (no GitHub sync configured and USERS_FILE isn't on persistent
+# storage — e.g. a Render free-tier service with no disk attached).
+print(f"[Forge] {len(load_users())} account(s) loaded"
+      f"{' (synced via GitHub Gist ' + GITHUB_GIST_ID + ')' if GITHUB_TOKEN and GITHUB_GIST_ID else f' from {USERS_FILE.resolve()}'}")
 
 
 def issue_token():
