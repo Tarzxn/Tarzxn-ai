@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import textwrap
+import threading
 import time
 import uuid
 import zipfile
@@ -18,6 +19,7 @@ from urllib.parse import quote
 
 import requests
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file, stream_with_context
+from werkzeug.security import check_password_hash, generate_password_hash
 from docx import Document
 from docx.shared import Pt
 from openpyxl import Workbook
@@ -37,17 +39,59 @@ WORKSPACES.mkdir(parents=True, exist_ok=True)
 WORKSPACE_MAX_AGE_SECONDS = 2 * 60 * 60  # ephemeral disk: prune old workspaces so it never fills up
 
 # ---- Authentication --------------------------------------------------------
-# Deliberately NOT cookie-based: no session cookie is ever set, so there is no
-# mechanism for a returning browser to get auto-logged-in. The frontend holds
-# a bearer token in sessionStorage (cleared the moment the tab/browser closes)
-# and sends it explicitly on every request. Tokens live only in this in-memory
-# dict, so a server restart invalidates every session — nothing about who was
-# logged in survives a shutdown, matching the same "don't remember after
-# shutdown" principle applied to conversations below.
-FORGE_USERNAME = os.environ.get("FORGE_USERNAME", "admin").strip()
+# Two different lifetimes, on purpose:
+#  - ACCOUNTS (who is allowed to log in) are persisted to disk, hashed, so
+#    people don't have to re-register every time the server restarts — that
+#    would make a login system pointless.
+#  - SESSIONS (being currently logged in) and conversation history are NOT
+#    persisted anywhere durable: session tokens live only in this in-memory
+#    dict (wiped on restart) and are never set as a cookie — the browser
+#    holds its token in sessionStorage, cleared the moment the tab closes, and
+#    sends it explicitly on every request. There is no mechanism for a
+#    returning visitor to be silently auto-logged-in.
+USERS_FILE = Path(os.environ.get("USERS_FILE", "data/users.json"))
+FORGE_USERNAME = os.environ.get("FORGE_USERNAME", "").strip()  # optional seed account, see seed_admin_account()
 FORGE_PASSWORD = os.environ.get("FORGE_PASSWORD", "").strip()
+FORGE_SIGNUP_CODE = os.environ.get("FORGE_SIGNUP_CODE", "").strip()  # optional invite code gating self-signup
 SESSION_TOKENS = {}  # token -> expiry unix timestamp
 SESSION_TTL_SECONDS = int(os.environ.get("FORGE_SESSION_HOURS", "12")) * 3600
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
+_users_lock = threading.Lock()  # gunicorn now runs with gthread workers, so concurrent requests within one process are real
+
+
+def load_users():
+    if not USERS_FILE.exists(): return {}
+    try:
+        return json.loads(USERS_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_users(users):
+    USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    USERS_FILE.write_text(json.dumps(users, indent=2))
+
+
+def create_user(username, password):
+    """Caller must hold _users_lock. Returns False if the username is taken."""
+    users = load_users()
+    key = username.lower()
+    if key in users: return False
+    users[key] = {"username": username, "password_hash": generate_password_hash(password), "created_at": time.time()}
+    save_users(users)
+    return True
+
+
+def seed_admin_account():
+    """Optional convenience: FORGE_USERNAME/FORGE_PASSWORD, if both set, are
+    created as a standing account on startup — same as it worked before
+    self-signup existed — so existing deployments keep working unchanged."""
+    if not FORGE_USERNAME or not FORGE_PASSWORD: return
+    with _users_lock:
+        create_user(FORGE_USERNAME, FORGE_PASSWORD)
+
+
+seed_admin_account()
 
 
 def issue_token():
@@ -78,8 +122,6 @@ def is_valid_token(token):
 def require_auth(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not FORGE_PASSWORD:
-            return jsonify(error="Forge isn't configured yet: set the FORGE_PASSWORD environment variable on the server (and optionally FORGE_USERNAME), then restart."), 500
         if not is_valid_token(token_from_request()):
             return jsonify(error="Not authenticated. Please log in."), 401
         return view(*args, **kwargs)
@@ -840,19 +882,53 @@ def tavily_search(query):
 def index(): return render_template("index.html")
 
 
+@app.get("/api/auth-info")
+def auth_info():
+    # Public (pre-login) — lets the login screen know whether to show/require
+    # the invite-code field before the person has any token to call /api/config with.
+    return jsonify(signupCodeRequired=bool(FORGE_SIGNUP_CODE))
+
+
 @app.post("/api/login")
 def login():
-    if not FORGE_PASSWORD:
-        return jsonify(error="Login isn't configured yet: set the FORGE_PASSWORD environment variable on the server (and optionally FORGE_USERNAME), then restart."), 500
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify(error="Malformed request body."), 400
     username = str(data.get("username", "")).strip()
-    password = str(data.get("password", "")).strip()
-    # Constant-time comparisons so response timing can't be used to guess characters.
-    if secrets.compare_digest(username, FORGE_USERNAME) and secrets.compare_digest(password, FORGE_PASSWORD):
-        return jsonify(token=issue_token(), expiresIn=SESSION_TTL_SECONDS)
-    return jsonify(error="Incorrect username or password."), 401
+    password = str(data.get("password", ""))
+    users = load_users()
+    if not users:
+        return jsonify(error='No accounts exist yet — use "Create account" below to set one up.'), 404
+    record = users.get(username.lower())
+    # check_password_hash is constant-time; run it even on a missing user
+    # (against a dummy hash) so a failed lookup and a wrong password take the
+    # same amount of time either way, and username existence can't be timed.
+    if not record:
+        check_password_hash(generate_password_hash("dummy"), password)
+        return jsonify(error="Incorrect username or password."), 401
+    if not check_password_hash(record["password_hash"], password):
+        return jsonify(error="Incorrect username or password."), 401
+    return jsonify(token=issue_token(), expiresIn=SESSION_TTL_SECONDS)
+
+
+@app.post("/api/signup")
+def signup():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="Malformed request body."), 400
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
+    code = str(data.get("code", "")).strip()
+    if FORGE_SIGNUP_CODE and not secrets.compare_digest(code, FORGE_SIGNUP_CODE):
+        return jsonify(error="Missing or incorrect invite code."), 403
+    if not USERNAME_RE.match(username):
+        return jsonify(error="Username must be 3-32 characters: letters, numbers, dots, hyphens, or underscores only."), 400
+    if len(password) < 8:
+        return jsonify(error="Password must be at least 8 characters."), 400
+    with _users_lock:
+        if not create_user(username, password):
+            return jsonify(error="That username is already taken."), 409
+    return jsonify(token=issue_token(), expiresIn=SESSION_TTL_SECONDS)
 
 
 @app.post("/api/logout")

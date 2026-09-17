@@ -57,6 +57,9 @@ body:not(.logged-out) #loginScreen{display:none}
 .login-card input:focus{border-color:var(--accent-dim)}
 .login-card button[type="submit"]{margin-top:18px;padding:11px;border-radius:10px;border:1px solid rgba(255,255,255,0.35);background:linear-gradient(155deg,var(--accent),var(--accent-2));color:#04150f;font-weight:700;font:14px var(--sans);cursor:pointer}
 .login-error{min-height:18px;color:#ff9a8a;font-size:12px;text-align:center;margin:10px 0 0}
+.auth-extra-field{margin-top:12px}
+.auth-switch{text-align:center;font-size:12px;color:var(--muted);margin:14px 0 0}
+.auth-switch a{color:var(--accent-2);text-decoration:underline;cursor:pointer}
 #logoutButton{margin-top:10px;width:100%;border:1px solid var(--glass-border-soft);background:transparent;color:#8790a0;font:11px var(--sans);padding:6px;border-radius:8px;cursor:pointer}
 #logoutButton:hover{background:var(--glass-strong);color:#dfe3e8}
 

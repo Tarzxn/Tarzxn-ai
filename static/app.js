@@ -328,20 +328,74 @@ function showLogin(message) {
   setTimeout(() => $('#loginUsername').focus(), 0);
 }
 
+// ---- Login / Create account toggle ------------------------------------
+// One form serves both modes so the two flows stay visually consistent.
+// Signup additionally needs a confirm-password field (client-side check
+// only — the real validation is server-side) and an invite-code field,
+// shown only when the server says one is actually required.
+let authMode = 'login';
+let signupCodeRequired = false;
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const signingUp = mode === 'signup';
+  $('#authTitle').textContent = signingUp ? 'Create your Forge account' : 'Sign in to Forge';
+  $('#loginSubmit').textContent = signingUp ? 'Create account' : 'Sign in';
+  $('#confirmField').hidden = !signingUp;
+  $('#codeField').hidden = !(signingUp && signupCodeRequired);
+  $('#loginConfirm').required = signingUp;
+  $('#loginPassword').autocomplete = signingUp ? 'new-password' : 'current-password';
+  $('#toSignupRow').hidden = signingUp;
+  $('#toLoginRow').hidden = !signingUp;
+  $('#loginError').textContent = '';
+}
+
+fetch('/api/auth-info').then(r => r.json()).then(cfg => {
+  signupCodeRequired = !!cfg.signupCodeRequired;
+  if (authMode === 'signup') $('#codeField').hidden = !signupCodeRequired;
+}).catch(() => { /* if this fails, the code field just stays hidden; the server still enforces it */ });
+
+$('#toSignupLink').addEventListener('click', (e) => { e.preventDefault(); setAuthMode('signup'); });
+$('#toLoginLink').addEventListener('click', (e) => { e.preventDefault(); setAuthMode('login'); });
+
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const username = $('#loginUsername').value.trim();
   const password = $('#loginPassword').value;
-  $('#loginSubmit').disabled = true;
   $('#loginError').textContent = '';
+
+  if (authMode === 'signup') {
+    if (password !== $('#loginConfirm').value) {
+      $('#loginError').textContent = "Passwords don't match.";
+      return;
+    }
+    if (password.length < 8) {
+      $('#loginError').textContent = 'Password must be at least 8 characters.';
+      return;
+    }
+  }
+
+  $('#loginSubmit').disabled = true;
   try {
-    const r = await fetch('/api/login', {
+    const endpoint = authMode === 'signup' ? '/api/signup' : '/api/login';
+    const body = authMode === 'signup'
+      ? { username, password, code: $('#loginCode').value.trim() }
+      : { username, password };
+    const r = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(body),
     });
     const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Sign-in failed.');
+    if (!r.ok) {
+      if (r.status === 404 && authMode === 'login') {
+        // No accounts exist on this server yet — steer straight to signup instead of a dead-end error.
+        setAuthMode('signup');
+        $('#loginError').textContent = 'No accounts exist yet — create the first one below.';
+        return;
+      }
+      throw new Error(data.error || (authMode === 'signup' ? 'Could not create account.' : 'Sign-in failed.'));
+    }
     state.token = data.token;
     sessionStorage.setItem(TOKEN_KEY, data.token);
     showApp();
@@ -360,6 +414,7 @@ $('#logoutButton').addEventListener('click', async () => {
   state.conversations = {};
   state.activeId = null;
   state.history = [];
+  setAuthMode('login');
   showLogin();
 });
 

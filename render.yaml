@@ -15,3 +15,9 @@ services:
         sync: false
       - key: FORGE_PASSWORD
         sync: false
+      - key: FORGE_SIGNUP_CODE
+        sync: false
+    disk:
+      name: forge-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
