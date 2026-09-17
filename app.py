@@ -92,6 +92,11 @@ def seed_admin_account():
 
 
 seed_admin_account()
+# A startup diagnostic, not an error: if this reads 0 accounts on every
+# restart even though people have signed up, USERS_FILE isn't actually on
+# persistent storage (e.g. a Render free-tier service with no disk attached)
+# and accounts are being silently lost on each redeploy.
+print(f"[Forge] {len(load_users())} account(s) loaded from {USERS_FILE.resolve()}")
 
 
 def issue_token():

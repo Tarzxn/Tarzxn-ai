@@ -2,6 +2,7 @@ services:
   - type: web
     name: forge-ollama-cloud
     runtime: python
+    plan: starter  # required: persistent disks (for data/users.json below) aren't available on the free plan
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --timeout 300 --workers 2 --worker-class gthread --threads 4
     envVars:
