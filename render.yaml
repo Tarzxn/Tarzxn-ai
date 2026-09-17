@@ -3,11 +3,15 @@ services:
     name: forge-ollama-cloud
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --timeout 300 --workers 2
+    startCommand: gunicorn app:app --timeout 300 --workers 2 --worker-class gthread --threads 4
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: OLLAMA_API_KEY
         sync: false
       - key: TAVILY_API_KEY
+        sync: false
+      - key: FORGE_USERNAME
+        sync: false
+      - key: FORGE_PASSWORD
         sync: false

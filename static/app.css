@@ -43,6 +43,23 @@ body{
   background:linear-gradient(155deg, rgba(255,255,255,0.10), rgba(255,255,255,0) 32%);
 }
 
+/* ---- Login gate: shown by default (body starts with class "logged-out");
+   JS flips the class the moment it knows whether a valid session token is
+   in sessionStorage, so the app never flashes visible before an auth check. */
+body.logged-out #app{display:none}
+body.logged-out #loginScreen{display:flex}
+body:not(.logged-out) #app{display:contents}
+body:not(.logged-out) #loginScreen{display:none}
+#loginScreen{position:fixed;inset:0;align-items:center;justify-content:center;padding:20px}
+.login-card{width:min(360px,100%);padding:28px;border-radius:20px;display:flex;flex-direction:column;gap:4px}
+.login-card label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);margin-top:12px}
+.login-card input{background:rgba(0,0,0,0.25);border:1px solid var(--glass-border-soft);border-radius:10px;padding:10px 12px;color:var(--text);font:14px var(--sans);outline:none}
+.login-card input:focus{border-color:var(--accent-dim)}
+.login-card button[type="submit"]{margin-top:18px;padding:11px;border-radius:10px;border:1px solid rgba(255,255,255,0.35);background:linear-gradient(155deg,var(--accent),var(--accent-2));color:#04150f;font-weight:700;font:14px var(--sans);cursor:pointer}
+.login-error{min-height:18px;color:#ff9a8a;font-size:12px;text-align:center;margin:10px 0 0}
+#logoutButton{margin-top:10px;width:100%;border:1px solid var(--glass-border-soft);background:transparent;color:#8790a0;font:11px var(--sans);padding:6px;border-radius:8px;cursor:pointer}
+#logoutButton:hover{background:var(--glass-strong);color:#dfe3e8}
+
 aside{position:fixed;width:250px;inset:0 auto 0 0;padding:16px 10px;display:flex;flex-direction:column;border-right:1px solid var(--glass-border-soft)}
 aside.glass{position:fixed} /* .glass's own `position:relative` would otherwise win over the tag rule above by specificity and break the fixed sidebar layout */
 .brand{font-size:16px;font-weight:700;padding:8px 10px 18px;display:flex;align-items:center;gap:8px;letter-spacing:.2px}

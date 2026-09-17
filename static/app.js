@@ -3,7 +3,14 @@ const convo = $('#conversation');
 const promptEl = $('#prompt');
 const sendBtn = $('#send');
 const HERO_HTML = $('#hero') ? $('#hero').outerHTML : '';
-const STORAGE_KEY = 'forge.conversations.v1';
+
+// Conversations AND the auth token both live in sessionStorage, never
+// localStorage and never a cookie: sessionStorage is wiped the moment the
+// tab/browser closes, so nothing is "remembered" past that point, and
+// because it's not a cookie the browser never auto-attaches it anywhere —
+// every request explicitly carries the token itself.
+const CONV_KEY = 'forge.conversations';
+const TOKEN_KEY = 'forge.token';
 
 const state = {
   model: 'gpt-oss:20b',
@@ -14,6 +21,7 @@ const state = {
   activeId: null,
   sending: false,
   controller: null,
+  token: null,
 };
 
 function escapeHtml(t) {
@@ -107,9 +115,18 @@ function fileIcon(path) {
 // Keeps each path segment correctly percent-encoded without turning the "/"
 // separators between folders into a literal "%2F" (which broke nested-file
 // downloads, since Flask's <path:filename> route never saw the real slash).
+// Plain <a href> links can't carry an Authorization header, so the auth
+// token rides along as a query parameter for these two routes specifically.
 function workspaceUrl(base, workspace, path) {
   const segments = path.split('/').map(encodeURIComponent).join('/');
-  return `${base}/${workspace}/${segments}`;
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}/${workspace}/${segments}${sep}token=${encodeURIComponent(state.token || '')}`;
+}
+
+// Same idea but for the whole-workspace zip route, which has no per-file
+// path segment at all.
+function workspaceZipUrl(workspace) {
+  return `/api/download/${workspace}?token=${encodeURIComponent(state.token || '')}`;
 }
 
 function buildArtifactHtml(data) {
@@ -134,7 +151,7 @@ function buildArtifactHtml(data) {
       ${gallery}
       <div class="artifact-head"><strong>${data.files.length} file${data.files.length === 1 ? '' : 's'} created</strong></div>
       <ul>${rows}</ul>
-      <a class="download-all" href="/api/download/${data.workspace}">Download all (.zip) ↓</a>
+      <a class="download-all" href="${workspaceZipUrl(data.workspace)}">Download all (.zip) ↓</a>
     </div>`;
 }
 
@@ -153,6 +170,7 @@ function add(role, html) {
 // copy/regenerate toolbar on every assistant reply. ----------------------
 function attachCodeCopyButtons(container) {
   container.querySelectorAll('pre').forEach(pre => {
+    if (pre.querySelector('.code-copy')) return; // avoid double-attaching during streaming re-renders
     const btn = document.createElement('button');
     btn.className = 'code-copy'; btn.type = 'button'; btn.textContent = 'Copy';
     btn.onclick = () => {
@@ -177,14 +195,15 @@ function attachMessageTools(container, replyText, msgIndex) {
   bar.querySelector('.regen-msg').onclick = () => regenerate(msgIndex, container);
 }
 
-// ---- Conversation persistence (localStorage) ----------------------------
+// ---- Conversation persistence (sessionStorage — cleared when the tab/
+// browser closes; nothing about a conversation survives past that). --------
 function loadConversations() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
+  try { return JSON.parse(sessionStorage.getItem(CONV_KEY)) || {}; }
   catch (e) { return {}; }
 }
 function saveConversations() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.conversations)); }
-  catch (e) { /* storage full or unavailable — conversation still works for this session */ }
+  try { sessionStorage.setItem(CONV_KEY, JSON.stringify(state.conversations)); }
+  catch (e) { /* storage full or unavailable — conversation still works for this page view */ }
 }
 function newConversationId() { return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function titleFor(text) {
@@ -282,10 +301,72 @@ function startNewConversation() {
   promptEl.focus();
 }
 
+// ---- Auth ------------------------------------------------------------
+// authFetch centralizes attaching the bearer token and reacting to a 401 by
+// dropping back to the login screen — every authenticated call in this file
+// goes through it instead of calling fetch() directly.
+async function authFetch(url, opts = {}) {
+  const headers = Object.assign({}, opts.headers, state.token ? { Authorization: `Bearer ${state.token}` } : {});
+  const response = await fetch(url, Object.assign({}, opts, { headers }));
+  if (response.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY);
+    state.token = null;
+    showLogin('Your session expired. Please sign in again.');
+  }
+  return response;
+}
+
+function showApp() {
+  document.body.classList.remove('logged-out');
+  initApp();
+}
+
+function showLogin(message) {
+  document.body.classList.add('logged-out');
+  $('#loginError').textContent = message || '';
+  $('#loginPassword').value = '';
+  setTimeout(() => $('#loginUsername').focus(), 0);
+}
+
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = $('#loginUsername').value.trim();
+  const password = $('#loginPassword').value;
+  $('#loginSubmit').disabled = true;
+  $('#loginError').textContent = '';
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Sign-in failed.');
+    state.token = data.token;
+    sessionStorage.setItem(TOKEN_KEY, data.token);
+    showApp();
+  } catch (err) {
+    $('#loginError').textContent = err.message;
+  } finally {
+    $('#loginSubmit').disabled = false;
+  }
+});
+
+$('#logoutButton').addEventListener('click', async () => {
+  try { await authFetch('/api/logout', { method: 'POST' }); } catch (e) { /* best-effort */ }
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(CONV_KEY);
+  state.token = null;
+  state.conversations = {};
+  state.activeId = null;
+  state.history = [];
+  showLogin();
+});
+
 // ---- Config / model list -------------------------------------------------
 async function loadConfig() {
   try {
-    const res = await fetch('/api/config');
+    const res = await authFetch('/api/config');
     const cfg = await res.json();
     state.webSearchAvailable = !!cfg.webSearchEnabled;
     const btn = $('#webSearchToggle');
@@ -296,7 +377,7 @@ async function loadConfig() {
 
 async function loadModels() {
   try {
-    const res = await fetch('/api/models');
+    const res = await authFetch('/api/models');
     const models = await res.json();
     $('#models').innerHTML = models.map(m => `
       <button class="model-choice" data-id="${escapeHtml(m.id)}" data-name="${escapeHtml(m.name)}">
@@ -315,17 +396,6 @@ async function loadModels() {
 
 function closeMenus() { $('#modelMenu').classList.remove('open'); }
 
-$('#modelButton').onclick = (e) => { e.stopPropagation(); $('#modelMenu').classList.toggle('open'); };
-$('#modelMenu').onclick = (e) => e.stopPropagation();
-
-$('#webSearchToggle').onclick = () => {
-  if ($('#webSearchToggle').disabled) return;
-  state.webSearch = !state.webSearch;
-  $('#webSearchToggle').classList.toggle('active', state.webSearch);
-};
-
-$('#newChat').onclick = startNewConversation;
-
 function rebindSuggestions() {
   document.querySelectorAll('.suggestions button').forEach(b => b.onclick = () => {
     promptEl.value = b.textContent;
@@ -334,14 +404,10 @@ function rebindSuggestions() {
   });
 }
 
-document.addEventListener('click', closeMenus);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
-
 function autoResize() {
   promptEl.style.height = 'auto';
   promptEl.style.height = Math.min(promptEl.scrollHeight, 220) + 'px';
 }
-promptEl.addEventListener('input', autoResize);
 
 function setSending(sending) {
   state.sending = sending;
@@ -354,13 +420,32 @@ function handleComposerAction() {
   if (state.sending) { state.controller?.abort(); return; }
   submitPrompt();
 }
-sendBtn.addEventListener('click', handleComposerAction);
-promptEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    if (!state.sending) handleComposerAction();
+
+// ---- Streaming reader ------------------------------------------------
+// Reads the server's newline-delimited JSON event stream (see /api/chat):
+// {"type":"delta","text":...} arrives as the reply is generated, ending in
+// either {"type":"done",...} or {"type":"error","error":...}.
+async function readEventStream(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 1);
+      if (!line) continue;
+      try { onEvent(JSON.parse(line)); } catch (e) { /* skip a malformed line rather than aborting the whole stream */ }
+    }
   }
-});
+  const trailing = buffer.trim();
+  if (trailing) {
+    try { onEvent(JSON.parse(trailing)); } catch (e) { /* ignore */ }
+  }
+}
 
 async function askModel(promptText) {
   const conv = state.conversations[state.activeId];
@@ -368,43 +453,65 @@ async function askModel(promptText) {
   state.controller = new AbortController();
   setSending(true);
 
+  let streamedText = '', finalEvent = null, streamError = null;
+
   try {
-    const r = await fetch('/api/chat', {
+    const r = await authFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: promptText, model: state.model, history: state.history, web_search: state.webSearch }),
       signal: state.controller.signal,
     });
 
-    // A non-JSON body (HTML error page from a proxy/gateway timeout, etc.)
-    // should never surface as a raw "Unexpected token '<'" parse error.
+    if (r.status === 401) throw new Error('Your session expired. Please sign in again.');
+
+    // A non-streaming, non-JSON body (HTML error page from a proxy/gateway
+    // timeout, etc.) should never surface as a raw "Unexpected token '<'".
     const contentType = r.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
+    if (!contentType.includes('application/x-ndjson')) {
+      if (contentType.includes('application/json')) {
+        const data = await r.json();
+        throw new Error(data.error || 'Request failed');
+      }
       const label = r.status === 504 || r.status === 502
         ? 'The server took too long to respond (likely a slow or overloaded model). Try again, or switch to a faster model.'
         : `Server error (HTTP ${r.status}). Try again in a moment.`;
       throw new Error(label);
     }
 
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Request failed');
+    await readEventStream(r, (event) => {
+      if (event.type === 'delta') {
+        streamedText += event.text;
+        pending.classList.remove('typing');
+        pending.innerHTML = renderReply(streamedText);
+      } else if (event.type === 'done') {
+        finalEvent = event;
+      } else if (event.type === 'error') {
+        streamError = event.error;
+      }
+    });
+
+    if (streamError) throw new Error(streamError);
+    if (!finalEvent) throw new Error('The model stopped responding unexpectedly. Please try again.');
 
     pending.classList.remove('typing');
-    pending.innerHTML = renderReply(data.reply) + buildArtifactHtml(data);
+    pending.innerHTML = renderReply(finalEvent.reply) + buildArtifactHtml(finalEvent);
     attachCodeCopyButtons(pending);
     const msgIndex = conv.messages.length;
-    conv.messages.push({ role: 'assistant', content: data.reply, data });
-    attachMessageTools(pending, data.reply, msgIndex);
+    conv.messages.push({ role: 'assistant', content: finalEvent.reply, data: finalEvent });
+    attachMessageTools(pending, finalEvent.reply, msgIndex);
     pending.scrollIntoView({ behavior: 'smooth', block: 'end' });
 
-    state.history.push({ role: 'user', content: promptText }, { role: 'assistant', content: data.reply });
+    state.history.push({ role: 'user', content: promptText }, { role: 'assistant', content: finalEvent.reply });
     if (!conv.title) conv.title = titleFor(promptText);
     persistActive();
   } catch (err) {
     pending.classList.remove('typing');
     if (err.name === 'AbortError') {
-      pending.innerHTML = '<span class="error-text">Stopped.</span>';
-      conv.messages.push({ role: 'assistant', content: 'Stopped.', error: true });
+      // If some text had already streamed in before Stop was pressed, keep it
+      // visible rather than discarding useful partial output.
+      pending.innerHTML = (streamedText ? renderReply(streamedText) : '') + '<div class="reply-text error-text" style="margin-top:6px">Stopped.</div>';
+      conv.messages.push({ role: 'assistant', content: streamedText || 'Stopped.', error: !streamedText });
     } else {
       pending.innerHTML = `<span class="error-text">${escapeHtml(err.message)}</span>`;
       conv.messages.push({ role: 'assistant', content: err.message, error: true });
@@ -455,17 +562,49 @@ async function regenerate(msgIndex, containerEl) {
   await askModel(userMsg.content);
 }
 
-// ---- Init -----------------------------------------------------------------
-state.conversations = loadConversations();
-const mostRecent = Object.values(state.conversations).filter(c => c.messages.length > 0).sort((a, b) => b.updatedAt - a.updatedAt)[0];
-if (mostRecent) {
-  state.activeId = mostRecent.id;
-  state.history = mostRecent.messages.filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
-  redrawConversation();
-} else {
-  rebindSuggestions();
+// ---- Wiring & init ------------------------------------------------------
+$('#modelButton').onclick = (e) => { e.stopPropagation(); $('#modelMenu').classList.toggle('open'); };
+$('#modelMenu').onclick = (e) => e.stopPropagation();
+$('#webSearchToggle').onclick = () => {
+  if ($('#webSearchToggle').disabled) return;
+  state.webSearch = !state.webSearch;
+  $('#webSearchToggle').classList.toggle('active', state.webSearch);
+};
+$('#newChat').onclick = startNewConversation;
+document.addEventListener('click', closeMenus);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });
+promptEl.addEventListener('input', autoResize);
+sendBtn.addEventListener('click', handleComposerAction);
+promptEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!state.sending) handleComposerAction();
+  }
+});
+
+function initApp() {
+  state.conversations = loadConversations();
+  const mostRecent = Object.values(state.conversations).filter(c => c.messages.length > 0).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (mostRecent) {
+    state.activeId = mostRecent.id;
+    state.history = mostRecent.messages.filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
+    redrawConversation();
+  } else {
+    rebindSuggestions();
+  }
+  renderRecentList();
+  loadConfig();
+  loadModels();
+  autoResize();
 }
-renderRecentList();
-loadConfig();
-loadModels();
-autoResize();
+
+// A page reload keeps the same tab's sessionStorage, so a valid token found
+// here means "still the same session" — not a persisted auto-login across
+// visits, since sessionStorage never survives the tab/browser closing.
+const existingToken = sessionStorage.getItem(TOKEN_KEY);
+if (existingToken) {
+  state.token = existingToken;
+  showApp();
+} else {
+  showLogin();
+}

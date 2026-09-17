@@ -6,14 +6,31 @@
 <title>Forge</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
-<body>
+<body class="logged-out">
 <div class="aurora"><span></span><span></span><span></span><span></span></div>
+
+<div id="loginScreen">
+  <form id="loginForm" class="glass login-card">
+    <div class="hero-mark" style="text-align:center">▣</div>
+    <h1 style="text-align:center;margin:8px 0 2px;font-weight:600">Sign in to Forge</h1>
+    <p style="text-align:center;color:var(--muted);font-size:13px;margin:0 0 20px">Your session stays only in this tab — closing it signs you out.</p>
+    <label>Username<input id="loginUsername" type="text" autocomplete="username" required></label>
+    <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+    <button type="submit" id="loginSubmit">Sign in</button>
+    <p id="loginError" class="login-error"></p>
+  </form>
+</div>
+
+<div id="app">
 <aside class="glass">
   <div class="brand"><span class="brand-mark">▣</span> Forge</div>
   <button class="new" id="newChat"><span>＋</span> New task</button>
   <p class="label">RECENT</p>
   <div id="recent"><button class="history active">Current workspace</button></div>
-  <div class="sidebar-foot">Ollama Cloud connected<br><small>Files stay in this workspace.</small></div>
+  <div class="sidebar-foot">
+    Ollama Cloud connected<br><small>Files stay in this workspace.</small>
+    <button id="logoutButton" type="button">Sign out</button>
+  </div>
 </aside>
 <main>
   <header>
@@ -51,6 +68,7 @@
     <p class="notice">Forge can make mistakes. Review generated files before using them. Press Enter to send, Shift+Enter for a new line.</p>
   </div>
 </main>
+</div>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
