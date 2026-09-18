@@ -22,8 +22,6 @@ services:
         sync: false
       - key: FORGE_PASSWORD
         sync: false
-      - key: FORGE_SIGNUP_CODE
-        sync: false
       - key: GITHUB_TOKEN
         sync: false
       - key: GITHUB_GIST_ID

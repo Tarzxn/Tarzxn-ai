@@ -22,7 +22,6 @@ Forge sits behind a login screen, with self-service account creation:
 - **Accounts persist**, sessions don't. Usernames and password hashes (via Werkzeug's `generate_password_hash`, never plaintext) are saved to a small JSON file on disk (`USERS_FILE`, default `data/users.json`), and optionally also synced to a private GitHub Gist for free (see below) — either way, people don't have to re-register every time the server restarts. Being logged *in*, and conversation history, are the opposite: session tokens live only in an in-memory dict (wiped on restart) and conversation history lives in the browser's `sessionStorage` — both gone the moment the tab/browser closes or the server restarts.
 - **No cookies, ever.** The server never sets one. On login/signup it hands back an opaque bearer token, which the browser holds in `sessionStorage` (not `localStorage`) and sends explicitly (`Authorization: Bearer ...`) on every request. There is no mechanism for a returning visitor to be silently auto-logged-in.
 - **Creating the first account.** There's no hardcoded default login. The first time you open Forge with zero accounts on the server, signing in automatically offers "Create one" — fill in a username and an 8+ character password and you're in. You can also seed a standing account via env vars (see below) instead, e.g. for automated deployments.
-- **Optional invite code.** Set `FORGE_SIGNUP_CODE` to require a shared code for anyone creating a new account (useful once you don't want the app open to literally anyone who finds the URL); leave it unset and signup is open to whoever reaches the page.
 - **Optional seed account.** Set `FORGE_USERNAME` + `FORGE_PASSWORD` to have Forge create that account automatically on startup (matches how earlier versions of this app worked, before self-signup existed). Being an env var, this one always survives redeploys on any host, disk or not.
 
 ### Making self-signup accounts survive redeploys for free
@@ -60,11 +59,10 @@ The picker offers Ollama Cloud's hosted catalogue:
 
 1. Install Python 3.12+.
 2. Create a virtual environment and install dependencies: `pip install -r requirements.txt`.
-3. Just run it and use "Create account" on first launch — no env vars are required to get a login working. Optionally seed a standing account instead, and/or require an invite code for anyone else who signs up:
+3. Just run it and use "Create account" on first launch — no env vars are required to get a login working. Optionally seed a standing account instead:
    ```
    export FORGE_USERNAME="admin"
    export FORGE_PASSWORD="choose-a-real-password"
-   export FORGE_SIGNUP_CODE="share-this-with-people-you-invite"   # optional
    ```
 4. Forge ships with an Ollama Cloud API key already set as the default in `app.py`, so text/code/file generation works immediately once you've logged in. To use a different key, set it in the environment instead — it overrides the built-in default:
    ```
@@ -78,7 +76,7 @@ The picker offers Ollama Cloud's hosted catalogue:
 
 ## Deploy to Render
 
-Push this directory to a Git repository and create a Render Blueprint from it (or a Python Web Service with the commands in `render.yaml`) — this now works fully on the **free plan**, no paid disk required. Set `OLLAMA_API_KEY` if you want to use a key other than the one built into `app.py`, and optionally `FORGE_USERNAME`/`FORGE_PASSWORD` (seed account), `FORGE_SIGNUP_CODE` (require an invite code for self-signup), and `GITHUB_TOKEN`/`GITHUB_GIST_ID` (free account persistence across redeploys — see the Authentication section above for setup) — all declared as non-synced secrets in `render.yaml`. `render.yaml` and `gunicorn.conf.py` both set a longer worker timeout (300s) since Ollama Cloud generations — especially file-heavy ones — routinely exceed gunicorn's 30s default, and use threaded (`gthread`) workers so one process can serve several concurrent streaming chats instead of a single request occupying a whole worker.
+Push this directory to a Git repository and create a Render Blueprint from it (or a Python Web Service with the commands in `render.yaml`) — this now works fully on the **free plan**, no paid disk required. Set `OLLAMA_API_KEY` if you want to use a key other than the one built into `app.py`, and optionally `FORGE_USERNAME`/`FORGE_PASSWORD` (seed account) and `GITHUB_TOKEN`/`GITHUB_GIST_ID` (free account persistence across redeploys — see the Authentication section above for setup) — all declared as non-synced secrets in `render.yaml`. `render.yaml` and `gunicorn.conf.py` both set a longer worker timeout (300s) since Ollama Cloud generations — especially file-heavy ones — routinely exceed gunicorn's 30s default, and use threaded (`gthread`) workers so one process can serve several concurrent streaming chats instead of a single request occupying a whole worker.
 
 **On accounts surviving redeploys**: without `GITHUB_TOKEN`/`GITHUB_GIST_ID` configured, self-signup accounts live only in `data/users.json` on Render's ephemeral disk and are lost on every redeploy — only the env-var seed account (`FORGE_USERNAME`/`FORGE_PASSWORD`) is guaranteed to survive on the free plan, since Render never wipes env vars. Set up Gist sync (free, five minutes, see above) to make *every* account — including ones created via self-signup — survive redeploys too. On startup Forge logs how many accounts it loaded, and whether Gist sync is active, so a drop back to 0 accounts after a redeploy is easy to spot. Generated files remain intentionally ephemeral either way — pruned after 2 hours regardless.
 

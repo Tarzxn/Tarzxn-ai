@@ -52,7 +52,6 @@ WORKSPACE_MAX_AGE_SECONDS = 2 * 60 * 60  # ephemeral disk: prune old workspaces 
 USERS_FILE = Path(os.environ.get("USERS_FILE", "data/users.json"))
 FORGE_USERNAME = os.environ.get("FORGE_USERNAME", "").strip()  # optional seed account, see seed_admin_account()
 FORGE_PASSWORD = os.environ.get("FORGE_PASSWORD", "").strip()
-FORGE_SIGNUP_CODE = os.environ.get("FORGE_SIGNUP_CODE", "").strip()  # optional invite code gating self-signup
 SESSION_TOKENS = {}  # token -> expiry unix timestamp
 SESSION_TTL_SECONDS = int(os.environ.get("FORGE_SESSION_HOURS", "12")) * 3600
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
@@ -964,13 +963,6 @@ def tavily_search(query):
 def index(): return render_template("index.html")
 
 
-@app.get("/api/auth-info")
-def auth_info():
-    # Public (pre-login) — lets the login screen know whether to show/require
-    # the invite-code field before the person has any token to call /api/config with.
-    return jsonify(signupCodeRequired=bool(FORGE_SIGNUP_CODE))
-
-
 @app.post("/api/login")
 def login():
     data = request.get_json(silent=True)
@@ -1000,9 +992,6 @@ def signup():
         return jsonify(error="Malformed request body."), 400
     username = str(data.get("username", "")).strip()
     password = str(data.get("password", ""))
-    code = str(data.get("code", "")).strip()
-    if FORGE_SIGNUP_CODE and not secrets.compare_digest(code, FORGE_SIGNUP_CODE):
-        return jsonify(error="Missing or incorrect invite code."), 403
     if not USERNAME_RE.match(username):
         return jsonify(error="Username must be 3-32 characters: letters, numbers, dots, hyphens, or underscores only."), 400
     if len(password) < 8:
