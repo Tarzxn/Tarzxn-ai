@@ -53,6 +53,7 @@ USERS_FILE = Path(os.environ.get("USERS_FILE", "data/users.json"))
 FORGE_USERNAME = os.environ.get("FORGE_USERNAME", "").strip()  # optional seed account, see seed_admin_account()
 FORGE_PASSWORD = os.environ.get("FORGE_PASSWORD", "").strip()
 SESSION_TOKENS = {}  # token -> expiry unix timestamp
+_session_lock = threading.Lock()  # gthread workers mean real concurrent threads touch this dict now
 SESSION_TTL_SECONDS = int(os.environ.get("FORGE_SESSION_HOURS", "12")) * 3600
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 _users_lock = threading.Lock()  # gunicorn now runs with gthread workers, so concurrent requests within one process are real
@@ -177,7 +178,8 @@ print(f"[Forge] {len(load_users())} account(s) loaded"
 
 def issue_token():
     token = secrets.token_urlsafe(32)
-    SESSION_TOKENS[token] = time.time() + SESSION_TTL_SECONDS
+    with _session_lock:
+        SESSION_TOKENS[token] = time.time() + SESSION_TTL_SECONDS
     return token
 
 
@@ -192,12 +194,13 @@ def token_from_request():
 
 def is_valid_token(token):
     if not token: return False
-    expiry = SESSION_TOKENS.get(token)
-    if expiry is None: return False
-    if time.time() > expiry:
-        SESSION_TOKENS.pop(token, None)
-        return False
-    return True
+    with _session_lock:
+        expiry = SESSION_TOKENS.get(token)
+        if expiry is None: return False
+        if time.time() > expiry:
+            SESSION_TOKENS.pop(token, None)
+            return False
+        return True
 
 
 def require_auth(view):
@@ -1099,7 +1102,8 @@ def signup():
 
 @app.post("/api/logout")
 def logout():
-    SESSION_TOKENS.pop(token_from_request(), None)
+    with _session_lock:
+        SESSION_TOKENS.pop(token_from_request(), None)
     return jsonify(ok=True)
 
 

@@ -9,14 +9,18 @@
 # own request timeout (up to 280s at High/Max power) so gunicorn never wins
 # that race.
 #
-# worker_class/threads: /api/chat now streams its response instead of
-# buffering it. A plain sync worker still blocks for the whole duration of
-# one request either way, so streaming alone doesn't need this — but gthread
-# workers let each worker interleave several concurrent streaming requests
-# (mostly idle, waiting on network I/O) instead of one request fully
-# monopolizing a worker, which meaningfully raises how many people can use
-# Forge at once on the same process count.
-timeout = 340
-workers = 2
+# workers MUST stay at 1. Login sessions (SESSION_TOKENS) live in an
+# in-memory Python dict by design — that's what makes a restart wipe every
+# session, with no session ever touching disk. But each gunicorn *worker* is
+# a separate OS process with its own private memory: with more than one
+# worker, a token issued by whichever process handled /api/login is simply
+# invisible to whichever process happens to handle the next request, which
+# looks exactly like getting logged out at random (in practice, close to
+# every single message, since requests round-robin across workers). Do not
+# "fix" this by raising `workers` — concurrency instead comes from
+# `worker_class = "gthread"` + `threads`, which run as threads inside this
+# one process and therefore correctly share the same SESSION_TOKENS dict.
+workers = 1
 worker_class = "gthread"
-threads = 4
+threads = 8
+timeout = 340

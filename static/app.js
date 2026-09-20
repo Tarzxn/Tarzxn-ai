@@ -324,28 +324,24 @@ function showApp() {
 
 function showLogin(message) {
   document.body.classList.add('logged-out');
+  setAuthMode('login');
   $('#loginError').textContent = message || '';
   $('#loginPassword').value = '';
   setTimeout(() => $('#loginUsername').focus(), 0);
 }
 
-// ---- Login / Create account toggle ------------------------------------
-// One form serves both modes so the two flows stay visually consistent.
-// Signup additionally needs a confirm-password field (client-side check
-// only — the real validation is server-side).
-let authMode = 'login';
-
+// ---- Login / Create account ------------------------------------------
+// Two entirely separate <form>s (only one visible at a time), rather than
+// one shared form with a conditionally-hidden confirm-password field. That
+// used to leave an inert "new-password" field sitting in the DOM even while
+// signing in, which is exactly the shape that trips up browser password
+// managers into odd autofill/"confirm your password" behavior on login.
 function setAuthMode(mode) {
-  authMode = mode;
   const signingUp = mode === 'signup';
-  $('#authTitle').textContent = signingUp ? 'Create your Forge account' : 'Sign in to Forge';
-  $('#loginSubmit').textContent = signingUp ? 'Create account' : 'Sign in';
-  $('#confirmField').hidden = !signingUp;
-  $('#loginConfirm').required = signingUp;
-  $('#loginPassword').autocomplete = signingUp ? 'new-password' : 'current-password';
-  $('#toSignupRow').hidden = signingUp;
-  $('#toLoginRow').hidden = !signingUp;
+  $('#loginForm').hidden = signingUp;
+  $('#signupForm').hidden = !signingUp;
   $('#loginError').textContent = '';
+  $('#signupError').textContent = '';
 }
 
 $('#toSignupLink').addEventListener('click', (e) => { e.preventDefault(); setAuthMode('signup'); });
@@ -356,35 +352,23 @@ $('#loginForm').addEventListener('submit', async (e) => {
   const username = $('#loginUsername').value.trim();
   const password = $('#loginPassword').value;
   $('#loginError').textContent = '';
-
-  if (authMode === 'signup') {
-    if (password !== $('#loginConfirm').value) {
-      $('#loginError').textContent = "Passwords don't match.";
-      return;
-    }
-    if (password.length < 8) {
-      $('#loginError').textContent = 'Password must be at least 8 characters.';
-      return;
-    }
-  }
-
   $('#loginSubmit').disabled = true;
   try {
-    const endpoint = authMode === 'signup' ? '/api/signup' : '/api/login';
-    const r = await fetch(endpoint, {
+    const r = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
     const data = await r.json();
     if (!r.ok) {
-      if (r.status === 404 && authMode === 'login') {
+      if (r.status === 404) {
         // No accounts exist on this server yet — steer straight to signup instead of a dead-end error.
         setAuthMode('signup');
-        $('#loginError').textContent = 'No accounts exist yet — create the first one below.';
+        $('#signupUsername').value = username;
+        $('#signupError').textContent = 'No accounts exist yet — create the first one below.';
         return;
       }
-      throw new Error(data.error || (authMode === 'signup' ? 'Could not create account.' : 'Sign-in failed.'));
+      throw new Error(data.error || 'Sign-in failed.');
     }
     state.token = data.token;
     sessionStorage.setItem(TOKEN_KEY, data.token);
@@ -396,6 +380,40 @@ $('#loginForm').addEventListener('submit', async (e) => {
   }
 });
 
+$('#signupForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = $('#signupUsername').value.trim();
+  const password = $('#signupPassword').value;
+  $('#signupError').textContent = '';
+
+  if (password !== $('#signupConfirm').value) {
+    $('#signupError').textContent = "Passwords don't match.";
+    return;
+  }
+  if (password.length < 8) {
+    $('#signupError').textContent = 'Password must be at least 8 characters.';
+    return;
+  }
+
+  $('#signupSubmit').disabled = true;
+  try {
+    const r = await fetch('/api/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Could not create account.');
+    state.token = data.token;
+    sessionStorage.setItem(TOKEN_KEY, data.token);
+    showApp();
+  } catch (err) {
+    $('#signupError').textContent = err.message;
+  } finally {
+    $('#signupSubmit').disabled = false;
+  }
+});
+
 $('#logoutButton').addEventListener('click', async () => {
   try { await authFetch('/api/logout', { method: 'POST' }); } catch (e) { /* best-effort */ }
   sessionStorage.removeItem(TOKEN_KEY);
@@ -404,7 +422,6 @@ $('#logoutButton').addEventListener('click', async () => {
   state.conversations = {};
   state.activeId = null;
   state.history = [];
-  setAuthMode('login');
   showLogin();
 });
 
@@ -639,6 +656,7 @@ $('#webSearchToggle').onclick = () => {
 document.querySelectorAll('.power-option').forEach(btn => btn.addEventListener('click', () => {
   state.power = btn.dataset.power;
   document.querySelectorAll('.power-option').forEach(b => b.classList.toggle('active', b === btn));
+  $('#powerThumb').style.transform = `translateX(${btn.dataset.index * 100}%)`;
 }));
 $('#newChat').onclick = startNewConversation;
 document.addEventListener('click', closeMenus);

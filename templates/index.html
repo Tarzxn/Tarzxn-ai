@@ -10,20 +10,30 @@
 <div class="aurora"><span></span><span></span><span></span><span></span></div>
 
 <div id="loginScreen">
-  <form id="loginForm" class="glass login-card">
+  <div class="login-card glass">
     <div class="hero-mark" style="text-align:center">▣</div>
-    <h1 id="authTitle" style="text-align:center;margin:8px 0 2px;font-weight:600">Sign in to Forge</h1>
-    <p id="authSubtitle" style="text-align:center;color:var(--muted);font-size:13px;margin:0 0 20px">Your session stays only in this tab — closing it signs you out.</p>
-    <label>Username<input id="loginUsername" type="text" autocomplete="username" required></label>
-    <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
-    <label id="confirmField" class="auth-extra-field" hidden>Confirm password<input id="loginConfirm" type="password" autocomplete="new-password"></label>
-    <button type="submit" id="loginSubmit">Sign in</button>
-    <p id="loginError" class="login-error"></p>
-    <p class="auth-switch">
-      <span id="toSignupRow">Don't have an account? <a href="#" id="toSignupLink">Create one</a></span>
-      <span id="toLoginRow" hidden>Already have an account? <a href="#" id="toLoginLink">Sign in</a></span>
-    </p>
-  </form>
+
+    <form id="loginForm" class="auth-form">
+      <h1>Sign in to Forge</h1>
+      <p class="auth-subtitle">Your session stays only in this tab — closing it signs you out.</p>
+      <label>Username<input id="loginUsername" type="text" autocomplete="username" required></label>
+      <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+      <button type="submit" id="loginSubmit">Sign in</button>
+      <p id="loginError" class="login-error"></p>
+      <p class="auth-switch">Don't have an account? <a href="#" id="toSignupLink">Create one</a></p>
+    </form>
+
+    <form id="signupForm" class="auth-form" hidden>
+      <h1>Create your Forge account</h1>
+      <p class="auth-subtitle">Your session stays only in this tab — closing it signs you out.</p>
+      <label>Username<input id="signupUsername" type="text" autocomplete="username" required></label>
+      <label>Password<input id="signupPassword" type="password" autocomplete="new-password" required></label>
+      <label>Confirm password<input id="signupConfirm" type="password" autocomplete="new-password" required></label>
+      <button type="submit" id="signupSubmit">Create account</button>
+      <p id="signupError" class="login-error"></p>
+      <p class="auth-switch">Already have an account? <a href="#" id="toLoginLink">Sign in</a></p>
+    </form>
+  </div>
 </div>
 
 <div id="app">
@@ -67,11 +77,11 @@
       <div class="composer-actions">
         <button id="webSearchToggle" type="button" class="pill-toggle" disabled title="Checking availability…">🔎 Web search</button>
         <div class="power-select" id="powerSelect" title="How much reasoning effort the model spends before answering">
-          <span class="power-label">Power</span>
-          <button type="button" class="power-option" data-power="low">Low</button>
-          <button type="button" class="power-option active" data-power="medium">Medium</button>
-          <button type="button" class="power-option" data-power="high">High</button>
-          <button type="button" class="power-option" data-power="max">Max</button>
+          <span class="power-thumb" id="powerThumb"></span>
+          <button type="button" class="power-option" data-power="low" data-index="0">Low</button>
+          <button type="button" class="power-option active" data-power="medium" data-index="1">Medium</button>
+          <button type="button" class="power-option" data-power="high" data-index="2">High</button>
+          <button type="button" class="power-option" data-power="max" data-index="3">Max</button>
         </div>
         <span>Files, code, documents, slides, spreadsheets, images, STL, and more</span>
         <button id="send" type="submit" aria-label="Send">↑</button>
