@@ -17,6 +17,7 @@ const state = {
   history: [],
   webSearch: false,
   webSearchAvailable: false,
+  power: 'medium',
   conversations: {},
   activeId: null,
   sending: false,
@@ -497,13 +498,26 @@ async function askModel(promptText) {
   state.controller = new AbortController();
   setSending(true);
 
-  let streamedText = '', finalEvent = null, streamError = null;
+  let streamedText = '', thinkingText = '', infoText = '', finalEvent = null, streamError = null;
+
+  // Composes whatever's arrived so far into the pending message: an optional
+  // info note (e.g. "auto-using the best model for 3D"), a live/collapsible
+  // "Thinking…" trace of the model's own reasoning (this is what "take its
+  // time and think before building" looks like from the outside), then the
+  // reply text itself (or the typing dots before any of it has arrived).
+  function renderPending(open) {
+    let html = '';
+    if (infoText) html += `<div class="info-note">💡 ${escapeHtml(infoText)}</div>`;
+    if (thinkingText) html += `<details class="thinking-trace"${open ? ' open' : ''}><summary>${open ? 'Thinking…' : 'Thinking'}</summary><div class="thinking-body">${escapeHtml(thinkingText)}</div></details>`;
+    html += streamedText ? renderReply(streamedText) : (thinkingText || infoText ? '' : '<div class="reply-text typing-indicator"><span></span><span></span><span></span></div>');
+    return html;
+  }
 
   try {
     const r = await authFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: promptText, model: state.model, history: state.history, web_search: state.webSearch }),
+      body: JSON.stringify({ prompt: promptText, model: state.model, history: state.history, web_search: state.webSearch, power: state.power }),
       signal: state.controller.signal,
     });
 
@@ -524,10 +538,18 @@ async function askModel(promptText) {
     }
 
     await readEventStream(r, (event) => {
-      if (event.type === 'delta') {
+      if (event.type === 'info') {
+        infoText = event.text;
+        pending.classList.remove('typing');
+        pending.innerHTML = renderPending(true);
+      } else if (event.type === 'thinking') {
+        thinkingText += event.text;
+        pending.classList.remove('typing');
+        pending.innerHTML = renderPending(true);
+      } else if (event.type === 'delta') {
         streamedText += event.text;
         pending.classList.remove('typing');
-        pending.innerHTML = renderReply(streamedText);
+        pending.innerHTML = renderPending(false);
       } else if (event.type === 'done') {
         finalEvent = event;
       } else if (event.type === 'error') {
@@ -539,7 +561,7 @@ async function askModel(promptText) {
     if (!finalEvent) throw new Error('The model stopped responding unexpectedly. Please try again.');
 
     pending.classList.remove('typing');
-    pending.innerHTML = renderReply(finalEvent.reply) + buildArtifactHtml(finalEvent);
+    pending.innerHTML = renderPending(false) + buildArtifactHtml(finalEvent);
     attachCodeCopyButtons(pending);
     const msgIndex = conv.messages.length;
     conv.messages.push({ role: 'assistant', content: finalEvent.reply, data: finalEvent });
@@ -554,7 +576,7 @@ async function askModel(promptText) {
     if (err.name === 'AbortError') {
       // If some text had already streamed in before Stop was pressed, keep it
       // visible rather than discarding useful partial output.
-      pending.innerHTML = (streamedText ? renderReply(streamedText) : '') + '<div class="reply-text error-text" style="margin-top:6px">Stopped.</div>';
+      pending.innerHTML = renderPending(false) + '<div class="reply-text error-text" style="margin-top:6px">Stopped.</div>';
       conv.messages.push({ role: 'assistant', content: streamedText || 'Stopped.', error: !streamedText });
     } else {
       pending.innerHTML = `<span class="error-text">${escapeHtml(err.message)}</span>`;
@@ -614,6 +636,10 @@ $('#webSearchToggle').onclick = () => {
   state.webSearch = !state.webSearch;
   $('#webSearchToggle').classList.toggle('active', state.webSearch);
 };
+document.querySelectorAll('.power-option').forEach(btn => btn.addEventListener('click', () => {
+  state.power = btn.dataset.power;
+  document.querySelectorAll('.power-option').forEach(b => b.classList.toggle('active', b === btn));
+}));
 $('#newChat').onclick = startNewConversation;
 document.addEventListener('click', closeMenus);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); });

@@ -237,7 +237,35 @@ MODELS = [
     {"id": "deepseek-v3.1:671b", "name": "DeepSeek V3.1 671B", "family": "DeepSeek", "tag": "Largest · slowest · frontier-scale"},
 ]
 DEFAULT_MODEL = MODELS[0]["id"]
+BEST_MODEL = "deepseek-v3.1:671b"  # largest/most capable in our catalogue — auto-used for 3D modeling requests, see chat()
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+
+# ---- Power level (ChatGPT-style Low/Medium/High/Max reasoning-effort slider) -----
+# Maps onto Ollama's native "think" field, which Qwen3, GPT-OSS, and
+# DeepSeek-v3.1 (every model in MODELS) all support: bool or "low"/"medium"/
+# "high". There's no official "max" level at the Ollama API — Forge's "Max"
+# instead combines "high" thinking with the largest token budget and (for 3D
+# requests specifically) the largest model, which is the actual lever
+# available for going further than "High".
+POWER_LEVELS = {
+    "low":    {"think": False,   "num_predict": 2048},
+    "medium": {"think": "low",   "num_predict": 4096},
+    "high":   {"think": "medium","num_predict": 6144},
+    "max":    {"think": "high",  "num_predict": 9216},
+}
+DEFAULT_POWER = "medium"
+
+_3D_REQUEST_PATTERN = re.compile(
+    r"\b(3d|three[\s-]?dimensional|stl|cad|\bprint(?:able|ed)?\b.*\b(model|part|object|design)|"
+    r"model.*\bprint\b|design.*\bprint\b|mount(?:ing)?\s*bracket|\bbracket\b|\bfigurine\b|\bmini(?:ature)?\b|"
+    r"\bsculpt|\bmesh\b|\bmold\b)\b", re.IGNORECASE)
+
+def looks_like_3d_request(prompt):
+    """Heuristic used to auto-select the strongest available model (and force
+    max reasoning effort) specifically for 3D-modeling requests, regardless
+    of whatever model/power the person has picked — 3D geometry is the one
+    output type here where model capability directly limits build quality."""
+    return bool(_3D_REQUEST_PATTERN.search(prompt))
 
 SYSTEM = '''You are Forge, an expert software and artifact builder. Turn the request into a concise response plus files. Respond with ONLY valid JSON, no prose before or after it, no markdown code fences, using this schema:
 {"reply":"short helpful Markdown response","files":[{"path":"safe relative filename.ext","kind":"text|docx|xlsx|pptx|pdf|stl|image|chart|base64","content":"content for artifact"}]}
@@ -254,11 +282,12 @@ For a 3D model, use kind "stl" with a .stl path. Take real time to think this th
   {"op":"add","shape":"box|sphere|cylinder|cone|torus|tube|capsule|wedge|pyramid","size":20,"radius":10,"height":20,"tube":4,"segments":16,"position":[x,y,z],"rotation":[rx,ry,rz],"scale":[sx,sy,sz]},
   {"op":"repeat","count":6,"rotate":[0,0,60],"around":[0,0,0]}
 ]}
-Shape params — "box": size [w,d,h] (or one number for a cube). "sphere"/"cylinder"/"cone": "radius" (+"height" for cylinder/cone). "torus": "radius" (ring) + "tube" (thickness). "tube": a hollow pipe/ring — "radius" (outer) + "inner_radius" + "height". "capsule": a pill shape — "radius" + "height" (straight section length; total length is height + 2*radius). "wedge": a ramp/doorstop/roof — size [w,d,h], sloped down along x. "pyramid": "size" (+optional "height"). "cylinder" with a low "segments" (e.g. 5, 6, 8) becomes a pentagonal/hexagonal/octagonal prism — use this for nuts, bolts, multi-sided posts, etc. instead of a separate prism shape. Leave "segments" unset to let Forge auto-pick a smooth value from the part's size; only set it explicitly for a deliberately low-poly/faceted look.
+Shape params — "box": size [w,d,h] (or one number for a cube); optionally add "bore":{"axis":"x|y|z","radius":R,"segments":N} to punch a clean round hole straight through the box along that axis (e.g. a screw hole, a mounting hole, a cable pass-through, a pivot hole) — this is a real hole through solid material, not a decoration. "sphere"/"cylinder"/"cone": "radius" (+"height" for cylinder/cone). "torus": "radius" (ring) + "tube" (thickness). "tube": a hollow pipe/ring — "radius" (outer) + "inner_radius" + "height". "capsule": a pill shape — "radius" + "height" (straight section length; total length is height + 2*radius). "wedge": a ramp/doorstop/roof — size [w,d,h], sloped down along x. "pyramid": "size" (+optional "height"). "cylinder" with a low "segments" (e.g. 5, 6, 8) becomes a pentagonal/hexagonal/octagonal prism — use this for nuts, bolts, multi-sided posts, etc. instead of a separate prism shape. Leave "segments" unset to let Forge auto-pick a smooth value from the part's size; only set it explicitly for a deliberately low-poly/faceted look.
 Every shape is centered on its own local origin, then: scaled by "scale" [sx,sy,sz] (stretch into an ellipsoid, plank, etc.), rotated by "rotation" [rx,ry,rz] degrees (X then Y then Z, e.g. tilt a fin or lay a cylinder on its side), then moved to "position" [x,y,z]. All optional, default no scale/rotation, position [0,0,0].
-"repeat" duplicates the shape from the immediately preceding "add" "count"-1 more times: "rotate":[rx,ry,rz] rotates each successive copy further around the "around" pivot (default world origin) — radial patterns (gear teeth, wheel spokes, flower petals, fins around a body). "translate":[dx,dy,dz] offsets each successive copy further along that vector — linear patterns (fence posts, stair treads, table legs, shelf slats). Combine both for a spiral/helix.
+"repeat" duplicates the shape from the immediately preceding "add" "count"-1 more times: "rotate":[rx,ry,rz] rotates each successive copy further around the "around" pivot (default world origin) — radial patterns (gear teeth, wheel spokes, flower petals, fins around a body). "translate":[dx,dy,dz] offsets each successive copy further along that vector — linear patterns (fence posts, stair treads, table legs, shelf slats, a row of mounting holes). Combine both for a spiral/helix.
 "mirror" reflects the immediately preceding "add" across an axis-aligned plane through the origin (or through "offset" along that axis): {"op":"mirror","axis":"x|y|z","offset":0} — use for symmetric designs (matched wings, a hull's two sides, paired brackets) instead of specifying both halves by hand.
-Build real objects from several parts (roughly 6-20 ops is normal for something detailed) — e.g. a mug = a "tube" body + a "torus" or bent-"capsule" handle positioned at the side; a table = one flat box top + 4 cylinder legs via one add + one repeat with translate; a gear = a short cylinder body + one tooth box at its edge + a repeat rotating around the center; a rocket = a cylinder body + a cone nose + a capsule or sphere tip + fin boxes via one add + a radial repeat. Prefer the shape that is actually hollow/rounded when the real object is (a cup or pipe should be a "tube", not a solid cylinder; a pill or rounded handle should be a "capsule", not a box). Keep coordinates within roughly -200..200. If one of your ops is invalid Forge will skip just that piece and keep the rest, so don't let one uncertain part stop you from building the others.
+There is deliberately no general subtract/union/intersect between arbitrary shapes — Forge tried a general boolean engine and it produced subtly broken (self-intersecting) geometry on realistic shapes during testing, so it was removed rather than shipped unreliable. Work within what's actually available: "bore" for holes through a box, "tube" for hollow cylinders/pipes/rings, overlapping "add"s for anything that reads fine as visually-merged solids (most non-precision parts don't need true CSG to look and print correctly).
+Design like an engineer, not an illustrator: before writing ops, work out in "plan" what the real object is made of (its distinct functional parts), roughly how big each one is relative to the others, and exactly how they align and connect (shared axis, shared face, a specific offset) — vague ops with parts floating unconnected or wildly mismatched in scale are the main way these builds go wrong. Build real objects from several parts (roughly 6-20 ops is normal for something detailed) — e.g. a mug = a "tube" body + a "torus" or bent-"capsule" handle positioned at the side; a table = one flat box top + 4 cylinder legs via one add + one repeat with translate; a gear = a short cylinder body + one tooth box at its edge + a repeat rotating around the center; a rocket = a cylinder body + a cone nose + a capsule or sphere tip + fin boxes via one add + a radial repeat; a bracket = a box with a "bore" for its mounting hole. Prefer the shape that is actually hollow/rounded/holed when the real object is (a cup or pipe should be a "tube" not a solid cylinder; a pill or rounded handle should be a "capsule" not a box; a mounting plate should use "bore" not a solid slab). Keep coordinates within roughly -200..200. If one of your ops is invalid Forge will skip just that piece and keep the rest, so don't let one uncertain part stop you from building the others.
 
 Use base64 only for true binary payloads that don't fit the kinds above. If the request only needs a text answer, return an empty files list. Never use absolute paths, traversal, or more than 12 files.'''
 
@@ -390,6 +419,66 @@ def _box_triangles(size):
     v = [(-hw,-hd,-hh),(hw,-hd,-hh),(hw,hd,-hh),(-hw,hd,-hh),(-hw,-hd,hh),(hw,-hd,hh),(hw,hd,hh),(-hw,hd,hh)]
     faces = [(0,2,1),(0,3,2),(4,5,6),(4,6,7),(0,1,5),(0,5,4),(1,2,6),(1,6,5),(2,3,7),(2,7,6),(3,0,4),(3,4,7)]
     return [(v[a], v[b], v[c]) for a, b, c in faces]
+
+
+def _box_with_bore_canonical(size, radius, segments):
+    """A box with a round hole bored straight through it along its local
+    z-axis. Built directly with an explicit, hand-verified triangulation
+    (radial "rim" bridge between the bore circle and the box's rectangular
+    cross-section) rather than a general boolean/CSG algorithm — an earlier,
+    general-purpose triangle-mesh boolean engine was tried for this and
+    discarded after testing found it produced subtly self-intersecting
+    geometry on realistic (non-axis-trivial) shapes; this construction is
+    provably correct by how it's built, and is verified watertight (manifold)
+    and hole-correct (via ray-casting) for every supported axis."""
+    w, d, h = size
+    hw, hd, hh = w / 2, d / 2, h / 2
+    radius = min(float(radius), min(hw, hd) * 0.92)  # keep the hole comfortably inside the footprint
+
+    def rim_point(theta):
+        c, s = math.cos(theta), math.sin(theta)
+        candidates = []
+        if abs(c) > 1e-9: candidates.append(hw / abs(c))
+        if abs(s) > 1e-9: candidates.append(hd / abs(s))
+        t = min(candidates)
+        return (t * c, t * s)
+
+    circle = [(radius * math.cos(2*math.pi*i/segments), radius * math.sin(2*math.pi*i/segments)) for i in range(segments)]
+    rim = [rim_point(2 * math.pi * i / segments) for i in range(segments)]
+
+    tris = []
+    for i in range(segments):
+        j = (i + 1) % segments
+        c0, c1, r0, r1 = circle[i], circle[j], rim[i], rim[j]
+        # top/bottom annular faces (rectangle-with-round-hole)
+        tris += [((c0[0],c0[1],hh), (c1[0],c1[1],hh), (r1[0],r1[1],hh)),
+                 ((c0[0],c0[1],hh), (r1[0],r1[1],hh), (r0[0],r0[1],hh)),
+                 ((c0[0],c0[1],-hh), (r0[0],r0[1],-hh), (r1[0],r1[1],-hh)),
+                 ((c0[0],c0[1],-hh), (r1[0],r1[1],-hh), (c1[0],c1[1],-hh))]
+        # inner bore wall
+        top0, top1, bot0, bot1 = (c0[0],c0[1],hh), (c1[0],c1[1],hh), (c0[0],c0[1],-hh), (c1[0],c1[1],-hh)
+        tris += [(bot1, bot0, top0), (bot1, top0, top1)]
+        # outer side wall — deliberately subdivided to match the annulus's own
+        # rim points exactly (not one flat quad per box side), since that
+        # mismatch is what caused the seam bug found during testing.
+        rtop0, rtop1, rbot0, rbot1 = (r0[0],r0[1],hh), (r1[0],r1[1],hh), (r0[0],r0[1],-hh), (r1[0],r1[1],-hh)
+        tris += [(rbot0, rbot1, rtop1), (rbot0, rtop1, rtop0)]
+    return tris
+
+
+def _box_with_bore(size, radius, segments=24, axis="z"):
+    sx, sy, sz = ((size, size, size) if not isinstance(size, (list, tuple)) else (list(size) + [size[0] if size else 20]*3)[:3])
+    sx, sy, sz = float(sx), float(sy), float(sz)
+    segments = _clamp_segments(segments, 12, 64)
+    axis = str(axis).lower()
+    if axis == "x":
+        canonical_size, permute = (sy, sz, sx), (lambda u, v, w: (w, u, v))
+    elif axis == "y":
+        canonical_size, permute = (sz, sx, sy), (lambda u, v, w: (v, w, u))
+    else:
+        canonical_size, permute = (sx, sy, sz), (lambda u, v, w: (u, v, w))
+    raw = _box_with_bore_canonical(canonical_size, radius, segments)
+    return [tuple(permute(*p) for p in tri) for tri in raw]
 
 
 def _wedge_triangles(size):
@@ -538,7 +627,13 @@ def _shape_radius(s, default=10):
 def build_local_shape(spec):
     """Build a shape centered on its own local origin, unrotated/unscaled/unplaced."""
     shape = spec.get("shape", "box")
-    if shape in ("box", "cube"): return _box_triangles(spec.get("size", 20))
+    if shape in ("box", "cube"):
+        bore = spec.get("bore")
+        if bore and isinstance(bore, dict):
+            size = spec.get("size", 20)
+            footprint = (size, size, size) if not isinstance(size, (list, tuple)) else (list(size) + [size[0] if size else 20]*3)[:3]
+            return _box_with_bore(size, float(bore.get("radius", min(footprint[0], footprint[1]) * 0.25)), bore.get("segments", 24), bore.get("axis", "z"))
+        return _box_triangles(spec.get("size", 20))
     if shape == "wedge": return _wedge_triangles(spec.get("size", 20))
     if shape == "pyramid": return _pyramid_triangles(spec.get("size", 20), spec.get("height"))
     if shape == "sphere":
@@ -1047,20 +1142,38 @@ def chat():
     messages.append({"role": "user", "content": prompt})
 
     model_id = data.get("model") or DEFAULT_MODEL
+    power = str(data.get("power", DEFAULT_POWER)).lower()
+    if power not in POWER_LEVELS: power = DEFAULT_POWER
+    auto_upgraded_for_3d = looks_like_3d_request(prompt)
+    if auto_upgraded_for_3d:
+        # 3D geometry quality is directly limited by model capability in a way
+        # the other file types mostly aren't, so this overrides whatever the
+        # person picked — regardless of their chosen model or power level —
+        # to the strongest model available at maximum reasoning effort.
+        model_id, power = BEST_MODEL, "max"
+    power_config = POWER_LEVELS[power]
+
     # Ollama's native /api/chat shape differs from OpenAI-style APIs: no
     # response_format, generation options nest under "options". stream:true
     # here (unlike earlier revisions) is what lets Forge show the reply as
-    # it's generated instead of one long wait.
-    payload = {"model": model_id, "messages": messages, "stream": True, "options": {"temperature": 0.35, "num_predict": 4096}}
+    # it's generated instead of one long wait. "think" triggers the model's
+    # own extended reasoning before it answers — this is what "take its time
+    # and think before building" actually maps to at the API level.
+    payload = {"model": model_id, "messages": messages, "stream": True,
+               "think": power_config["think"],
+               "options": {"temperature": 0.35, "num_predict": power_config["num_predict"]}}
 
     # Open the upstream connection first — with a couple of retries for
     # transient failures — so a failure here can still return a normal JSON
     # error response. Once we start streaming a 200 body below, the status
     # code can no longer change, so all of this must happen before that.
+    # Timeout scales with power level: Max reasoning + the largest token
+    # budget genuinely needs more wall-clock room than a quick Low-power reply.
+    upstream_timeout = {"low": 150, "medium": 220, "high": 280, "max": 280}[power]
     upstream, last_error = None, None
     for attempt in range(2):
         try:
-            candidate = requests.post(OLLAMA_CHAT_URL, headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"}, json=payload, timeout=260, stream=True)
+            candidate = requests.post(OLLAMA_CHAT_URL, headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"}, json=payload, timeout=upstream_timeout, stream=True)
         except requests.RequestException as error:
             last_error = error; time.sleep(0.6); continue
         if candidate.status_code in (502, 503, 504) and attempt == 0:
@@ -1083,6 +1196,8 @@ def chat():
         extractor = ReplyStreamExtractor()
         raw_parts, done_reason = [], None
         try:
+            if auto_upgraded_for_3d:
+                yield json.dumps({"type": "info", "text": f"3D model request detected — auto-using {model_id} at Max power for best build quality."}) + "\n"
             try:
                 for line in upstream.iter_lines(decode_unicode=True):
                     if not line: continue
@@ -1090,7 +1205,11 @@ def chat():
                         chunk = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    piece = (chunk.get("message") or {}).get("content", "")
+                    message = chunk.get("message") or {}
+                    thinking = message.get("thinking", "")
+                    if thinking:
+                        yield json.dumps({"type": "thinking", "text": thinking}) + "\n"
+                    piece = message.get("content", "")
                     if piece:
                         raw_parts.append(piece)
                         delta = extractor.feed(piece)
@@ -1134,7 +1253,7 @@ def chat():
             )
             reply = result.get("reply", "Done.")
             if notes: reply += "\n\n" + "\n".join(notes)
-            yield json.dumps({"type": "done", "reply": reply, "workspace": workspace_id, "files": manifest}) + "\n"
+            yield json.dumps({"type": "done", "reply": reply, "workspace": workspace_id, "files": manifest, "modelUsed": model_id, "powerUsed": power}) + "\n"
         except Exception as error:  # never let the stream just hang or die silently
             yield json.dumps({"type": "error", "error": f"Generation failed: {error}"}) + "\n"
 

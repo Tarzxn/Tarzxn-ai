@@ -10,7 +10,7 @@ services:
     # `plan` in the Render dashboard or here — Render's free plan can't
     # attach a disk at all.
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --timeout 300 --workers 2 --worker-class gthread --threads 4
+    startCommand: gunicorn app:app --timeout 340 --workers 2 --worker-class gthread --threads 4
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7

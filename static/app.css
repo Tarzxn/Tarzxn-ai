@@ -110,11 +110,17 @@ header{height:56px;padding:10px 24px;display:flex;align-items:center;position:re
 #composer{border-radius:20px;padding:10px 12px}
 #composer:focus-within{border-color:var(--accent-dim);box-shadow:0 0 0 3px var(--accent-dim), 0 1px 0 0 rgba(255,255,255,0.18) inset, 0 18px 40px -18px #000c}
 textarea{width:100%;resize:none;border:0;outline:0;background:transparent;color:#eee;font:14px var(--sans);min-height:24px;max-height:220px;line-height:1.5;padding:4px 2px}
-.composer-actions{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px;margin-top:4px}
+.composer-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;color:var(--muted);font-size:11px;margin-top:4px}
 .pill-toggle{flex:0 0 auto;border:1px solid var(--glass-border-soft);background:var(--glass);color:#cfd4db;font:12px var(--sans);padding:6px 11px;border-radius:999px;cursor:pointer;transition:all .15s ease}
 .pill-toggle:hover:not(:disabled){background:var(--glass-strong)}
 .pill-toggle.active{background:linear-gradient(155deg,var(--accent),var(--accent-2));color:#04150f;border-color:rgba(255,255,255,0.4);font-weight:600}
 .pill-toggle:disabled{opacity:.4;cursor:not-allowed}
+
+.power-select{flex:0 0 auto;display:flex;align-items:center;gap:4px;background:var(--glass);border:1px solid var(--glass-border-soft);border-radius:999px;padding:3px;font-size:11px}
+.power-label{color:var(--muted);padding:0 6px 0 8px;font-size:11px;white-space:nowrap}
+.power-option{border:0;background:transparent;color:#9aa0ab;font:11px var(--sans);padding:5px 10px;border-radius:999px;cursor:pointer;transition:all .15s ease}
+.power-option:hover{color:#dfe3e8}
+.power-option.active{background:linear-gradient(155deg,var(--accent),var(--accent-2));color:#04150f;font-weight:700}
 .composer-actions button{margin-left:auto;width:32px;height:32px;border:1px solid rgba(255,255,255,0.35);border-radius:50%;font-size:18px;background:linear-gradient(155deg,var(--accent),var(--accent-2));color:#04150f;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px -4px #7cf2c488;transition:background .15s ease}
 .composer-actions button:disabled{opacity:.35;cursor:default;box-shadow:none}
 .composer-actions button.stopping{background:linear-gradient(155deg,#ff9a8a,#ff7c7c);box-shadow:0 4px 14px -4px #ff7c7c88}
@@ -172,6 +178,13 @@ textarea{width:100%;resize:none;border:0;outline:0;background:transparent;color:
 .download-all{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(155deg,var(--accent),var(--accent-2));color:#04150f;text-decoration:none;padding:9px 13px;border-radius:10px;font-weight:700;font-size:12px;margin:10px;border:1px solid rgba(255,255,255,0.35);box-shadow:0 4px 14px -4px #7cf2c488}
 
 .error-text{color:#ff9a8a}
+.info-note{color:var(--accent-2);font-size:11.5px;opacity:.85;margin:2px 0 8px;display:flex;align-items:center;gap:6px}
+.thinking-trace{border:1px solid var(--glass-border-soft);border-radius:12px;margin:0 0 10px;overflow:hidden}
+.thinking-trace summary{cursor:pointer;padding:8px 12px;font-size:12px;color:var(--muted);list-style:none;display:flex;align-items:center;gap:6px;user-select:none}
+.thinking-trace summary::-webkit-details-marker{display:none}
+.thinking-trace summary::before{content:"▸";transition:transform .15s ease}
+.thinking-trace[open] summary::before{transform:rotate(90deg)}
+.thinking-trace .thinking-body{padding:0 14px 12px;font-size:12px;color:#9aa0ab;white-space:pre-wrap;line-height:1.5;max-height:240px;overflow-y:auto}
 
 @media(max-width:700px){
   aside{display:none}
