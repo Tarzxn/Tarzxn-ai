@@ -232,7 +232,7 @@ TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 # Ollama Cloud's hosted catalogue. gpt-oss:20b is the default: it's a strong,
 # fast open-weight instruction/coding model sized to run well on the cloud
-# tier without the latency of the much larger 120b/671b models below.
+# tier without the latency of the larger 120b model below.
 MODELS = [
     {"id": "gpt-oss:20b", "name": "GPT-OSS 20B", "family": "OpenAI OSS", "tag": "Recommended · fast & capable"},
     {"id": "gpt-oss:120b", "name": "GPT-OSS 120B", "family": "OpenAI OSS", "tag": "Larger · slower · stronger reasoning"},
@@ -1307,4 +1307,11 @@ def preview_single(workspace_id, filename):
     return send_file(target, as_attachment=False, mimetype=mimetype)
 
 
-if __name__ == "__main__": app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+if __name__ == "__main__":
+    # debug=True enables Werkzeug's interactive in-browser debugger, which
+    # can execute arbitrary code from an error page — a real risk for an app
+    # that gates access behind login. Off by default; opt in explicitly for
+    # local development only, never in a real deployment (which uses
+    # gunicorn via render.yaml/gunicorn.conf.py anyway, not this __main__ block).
+    debug_mode = os.environ.get("FLASK_DEBUG", "").strip().lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=debug_mode)

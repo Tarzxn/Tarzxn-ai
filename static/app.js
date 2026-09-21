@@ -535,13 +535,18 @@ async function askModel(promptText) {
   // re-parsed dozens of times a second on a long reply) and visibly janky.
   // Batch updates to at most once per animation frame instead — the closure
   // always picks up whichever text is freshest by the time the frame fires.
-  let renderScheduled = false, pendingOpen = false;
+  let renderScheduled = false, pendingOpen = false, settled = false;
   function scheduleRender(open) {
     pendingOpen = open;
     if (renderScheduled) return;
     renderScheduled = true;
     requestAnimationFrame(() => {
       renderScheduled = false;
+      // A render can still be queued for the frame right after the stream
+      // ends in error or gets aborted — without this guard it would fire
+      // afterward and silently overwrite the final "Stopped."/error message
+      // with the last (incomplete) partial content instead.
+      if (settled) return;
       pending.innerHTML = renderPending(pendingOpen);
     });
   }
@@ -593,6 +598,7 @@ async function askModel(promptText) {
     if (streamError) throw new Error(streamError);
     if (!finalEvent) throw new Error('The model stopped responding unexpectedly. Please try again.');
 
+    settled = true;
     pending.classList.remove('typing');
     pending.innerHTML = renderPending(false) + buildArtifactHtml(finalEvent);
     attachCodeCopyButtons(pending);
@@ -605,6 +611,7 @@ async function askModel(promptText) {
     if (!conv.title) conv.title = titleFor(promptText);
     persistActive();
   } catch (err) {
+    settled = true;
     pending.classList.remove('typing');
     if (err.name === 'AbortError') {
       // If some text had already streamed in before Stop was pressed, keep it
