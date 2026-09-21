@@ -236,18 +236,18 @@ TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 MODELS = [
     {"id": "gpt-oss:20b", "name": "GPT-OSS 20B", "family": "OpenAI OSS", "tag": "Recommended · fast & capable"},
     {"id": "gpt-oss:120b", "name": "GPT-OSS 120B", "family": "OpenAI OSS", "tag": "Larger · slower · stronger reasoning"},
-    {"id": "qwen3:32b", "name": "Qwen3 32B", "family": "Qwen", "tag": "Strong general & code"},
-    {"id": "deepseek-v3.1:671b", "name": "DeepSeek V3.1 671B", "family": "DeepSeek", "tag": "Largest · slowest · frontier-scale"},
 ]
 DEFAULT_MODEL = MODELS[0]["id"]
-BEST_MODEL = "deepseek-v3.1:671b"  # largest/most capable in our catalogue — auto-used for 3D modeling requests, see chat()
+BEST_MODEL = "gpt-oss:120b"  # largest/most capable in our catalogue — auto-used for 3D modeling requests, see chat()
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
 
 # ---- Power level (ChatGPT-style Low/Medium/High/Max reasoning-effort slider) -----
-# Maps onto Ollama's native "think" field, which Qwen3, GPT-OSS, and
-# DeepSeek-v3.1 (every model in MODELS) all support: bool or "low"/"medium"/
-# "high". There's no official "max" level at the Ollama API — Forge's "Max"
-# instead combines "high" thinking with the largest token budget and (for 3D
+# Maps onto Ollama's native "think" field, which GPT-OSS (every model in
+# MODELS) supports: bool or "low"/"medium"/"high" (GPT-OSS specifically
+# always reasons at least a little regardless of the boolean value — "Low"
+# still gets the smallest token budget and skips the explicit higher levels).
+# There's no official "max" level at the Ollama API — Forge's "Max" instead
+# combines "high" thinking with the largest token budget and (for 3D
 # requests specifically) the largest model, which is the actual lever
 # available for going further than "High".
 POWER_LEVELS = {

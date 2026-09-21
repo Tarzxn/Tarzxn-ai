@@ -53,12 +53,10 @@ All generated paths are restricted to a per-request workspace and delivered as a
 
 ## Models
 
-The picker offers Ollama Cloud's hosted catalogue:
+Forge deliberately sticks to Ollama's own `gpt-oss` family rather than third-party cloud models (Qwen, DeepSeek, etc.) whose Ollama Cloud offerings churn heavily — DeepSeek's alone has been retired and replaced multiple times (v3.1 → v4-flash → v4-pro) in the time this app has existed. `gpt-oss` has stayed stable:
 
 - **GPT-OSS 20B** (default) — fast, capable, and the best balance of speed vs. quality for interactive use.
-- GPT-OSS 120B — larger, slower, stronger reasoning.
-- Qwen3 32B — strong general-purpose and code alternative.
-- DeepSeek V3.1 671B — frontier-scale, noticeably slower; use for the hardest requests.
+- GPT-OSS 120B — larger, slower, stronger reasoning; also what Forge auto-switches to for 3D-modeling requests (see below).
 
 ## Run locally
 

@@ -70,7 +70,9 @@ body:not(.logged-out) #loginScreen{display:none}
 
 aside{position:fixed;width:250px;inset:0 auto 0 0;padding:16px 10px;display:flex;flex-direction:column;border-right:1px solid var(--glass-border-soft)}
 aside.glass{position:fixed} /* .glass's own `position:relative` would otherwise win over the tag rule above by specificity and break the fixed sidebar layout */
-.brand{font-size:16px;font-weight:700;padding:8px 10px 18px;display:flex;align-items:center;gap:8px;letter-spacing:.2px}
+.brand{font-size:16px;font-weight:700;padding:8px 10px 2px;display:flex;align-items:center;gap:8px;letter-spacing:.2px}
+.tagline{font-size:11px;color:var(--accent-2);opacity:.8;padding:0 10px 16px;margin:0;font-weight:500;letter-spacing:.01em}
+.hero .tagline{font-size:13px;padding:0;margin:-4px 0 10px;text-align:center}
 .brand-mark,.hero-mark,.orb{color:var(--accent)}
 .new,.history{width:100%;border:1px solid var(--glass-border-soft);border-radius:10px;padding:10px 12px;text-align:left;background:var(--glass);color:#ddd;font:13px var(--sans);display:flex;align-items:center;gap:8px;cursor:pointer;transition:background .15s ease,border-color .15s ease}
 .new{font-weight:600}

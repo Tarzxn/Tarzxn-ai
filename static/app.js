@@ -530,6 +530,22 @@ async function askModel(promptText) {
     return html;
   }
 
+  // Re-parsing and re-rendering the whole accumulated reply on every single
+  // small streamed chunk gets both wasteful (the same markdown gets
+  // re-parsed dozens of times a second on a long reply) and visibly janky.
+  // Batch updates to at most once per animation frame instead — the closure
+  // always picks up whichever text is freshest by the time the frame fires.
+  let renderScheduled = false, pendingOpen = false;
+  function scheduleRender(open) {
+    pendingOpen = open;
+    if (renderScheduled) return;
+    renderScheduled = true;
+    requestAnimationFrame(() => {
+      renderScheduled = false;
+      pending.innerHTML = renderPending(pendingOpen);
+    });
+  }
+
   try {
     const r = await authFetch('/api/chat', {
       method: 'POST',
@@ -558,15 +574,15 @@ async function askModel(promptText) {
       if (event.type === 'info') {
         infoText = event.text;
         pending.classList.remove('typing');
-        pending.innerHTML = renderPending(true);
+        scheduleRender(true);
       } else if (event.type === 'thinking') {
         thinkingText += event.text;
         pending.classList.remove('typing');
-        pending.innerHTML = renderPending(true);
+        scheduleRender(true);
       } else if (event.type === 'delta') {
         streamedText += event.text;
         pending.classList.remove('typing');
-        pending.innerHTML = renderPending(false);
+        scheduleRender(false);
       } else if (event.type === 'done') {
         finalEvent = event;
       } else if (event.type === 'error') {
