@@ -757,7 +757,13 @@ def run_stl_program(spec):
         except (ValueError, TypeError, KeyError, ZeroDivisionError, ArithmeticError) as error:
             notes.append(f"⚠️ Step {index+1} ({kind}): {error} — skipped, rest of the model was still built.")
         if len(triangles) > MAX_TRIANGLES:
-            raise ValueError("That design is too complex to build (too many triangles) — simplify it")
+            # Stop adding more geometry, but keep everything already built —
+            # discarding a huge, mostly-complete model over its last few ops
+            # would mean the file never gets produced at all, which is worse
+            # than handing back a slightly-truncated (but still real, still
+            # watertight-per-piece) result.
+            notes.append(f"⚠️ Stopped after step {index+1}: this design got too complex (over {MAX_TRIANGLES:,} triangles) to keep building safely — the file below is everything built up to that point.")
+            break
     if not triangles:
         raise ValueError("STL program produced no geometry")
 
@@ -880,6 +886,18 @@ def _draw_rich_line(pdf, x, y, text, size, base_font="Helvetica"):
         cursor += pdf.stringWidth(chunk, font, size)
 
 
+def _parse_json_content(content):
+    """Most non-text file kinds (chart, xlsx, pptx, stl) expect "content" to
+    be a JSON-encoded string. When a response combines several files of
+    different kinds, models occasionally slip and emit that field as already-
+    nested JSON (a dict/list) instead of a string — accept that directly
+    rather than crashing the whole file over what the model actually meant
+    unambiguously."""
+    if isinstance(content, (dict, list)):
+        return content
+    return json.loads(content)
+
+
 def write_artifact(root, item):
     """Writes one artifact to disk. Returns a list of non-fatal warning
     strings (only ever populated for "stl", where a bad build step is
@@ -910,7 +928,7 @@ def write_artifact(root, item):
             raise ValueError("Image generation did not return an image")
         path.write_bytes(response.content)
     elif kind == "chart":
-        render_chart(json.loads(content), path)
+        render_chart(_parse_json_content(content), path)
     elif kind == "docx":
         # Lightweight Markdown: "#"-headings, "- " bullets, **bold** spans,
         # and "| a | b |" tables — instead of dumping everything as identical
@@ -939,7 +957,7 @@ def write_artifact(root, item):
         doc.save(path)
     elif kind == "xlsx":
         wb = Workbook(); sheet = wb.active; sheet.title = "Sheet1"
-        rows = json.loads(content)
+        rows = _parse_json_content(content)
         for row_index, row in enumerate(rows):
             sheet.append(row if isinstance(row, list) else [row])
             if row_index == 0:
@@ -954,7 +972,7 @@ def write_artifact(root, item):
         wb.save(path)
     elif kind == "pptx":
         pres = Presentation()
-        for slide_data in json.loads(content):
+        for slide_data in _parse_json_content(content):
             slide = pres.slides.add_slide(pres.slide_layouts[1])
             slide.shapes.title.text = slide_data.get("title", "Untitled")
             body = slide.placeholders[1].text_frame
@@ -1010,7 +1028,7 @@ def write_artifact(root, item):
                 y -= 4
         pdf.save()
     elif kind == "stl":
-        spec = json.loads(content)
+        spec = _parse_json_content(content)
         triangles, warnings = run_stl_program(spec)
         path.write_text(render_ascii_stl(triangles), encoding="ascii")
         return warnings
