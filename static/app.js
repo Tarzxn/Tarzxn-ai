@@ -522,10 +522,19 @@ async function askModel(promptText) {
   // "Thinking…" trace of the model's own reasoning (this is what "take its
   // time and think before building" looks like from the outside), then the
   // reply text itself (or the typing dots before any of it has arrived).
+  let userToggledThinking = false;
   function renderPending(open) {
     let html = '';
     if (infoText) html += `<div class="info-note">💡 ${escapeHtml(infoText)}</div>`;
-    if (thinkingText) html += `<details class="thinking-trace"${open ? ' open' : ''}><summary>${open ? 'Thinking…' : 'Thinking'}</summary><div class="thinking-body">${escapeHtml(thinkingText)}</div></details>`;
+    if (thinkingText) {
+      // Every render fully replaces the DOM, which would otherwise silently
+      // snap a manually-collapsed/expanded trace back to whatever "open"
+      // this call was passed — respect the user's own toggle once they've
+      // used it, instead of fighting them on every subsequent chunk.
+      const existing = pending.querySelector('.thinking-trace');
+      const actuallyOpen = userToggledThinking && existing ? existing.open : open;
+      html += `<details class="thinking-trace"${actuallyOpen ? ' open' : ''}><summary>${actuallyOpen ? 'Thinking…' : 'Thinking'}</summary><div class="thinking-body">${escapeHtml(thinkingText)}</div></details>`;
+    }
     html += streamedText ? renderReply(streamedText) : (thinkingText || infoText ? '' : '<div class="reply-text typing-indicator"><span></span><span></span><span></span></div>');
     return html;
   }
@@ -548,6 +557,8 @@ async function askModel(promptText) {
       // with the last (incomplete) partial content instead.
       if (settled) return;
       pending.innerHTML = renderPending(pendingOpen);
+      const details = pending.querySelector('.thinking-trace');
+      if (details) details.addEventListener('toggle', () => { userToggledThinking = true; }, { once: true });
     });
   }
 

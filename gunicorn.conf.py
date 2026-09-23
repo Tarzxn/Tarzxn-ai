@@ -6,7 +6,7 @@
 # largest model) can take well over gunicorn's 30s default, which otherwise
 # kills the worker mid-request and makes the platform's proxy return an HTML
 # error page instead of Forge's own JSON error response. Kept above app.py's
-# own request timeout (up to 280s at High/Max power) so gunicorn never wins
+# own request timeout (up to 380s at High/Max power) so gunicorn never wins
 # that race.
 #
 # workers MUST stay at 1. Login sessions (SESSION_TOKENS) live in an
@@ -23,4 +23,4 @@
 workers = 1
 worker_class = "gthread"
 threads = 8
-timeout = 340
+timeout = 420

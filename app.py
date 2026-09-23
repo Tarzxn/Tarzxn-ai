@@ -251,11 +251,19 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
 # requests specifically) the largest model, which is the actual lever
 # available for going further than "High".
 POWER_LEVELS = {
-    "low":    {"think": False,   "num_predict": 2048},
-    "medium": {"think": "low",   "num_predict": 4096},
-    "high":   {"think": "medium","num_predict": 6144},
-    "max":    {"think": "high",  "num_predict": 9216},
+    "low":    {"think": False,   "num_predict": 3072},
+    "medium": {"think": "low",   "num_predict": 6144},
+    "high":   {"think": "medium","num_predict": 11264},
+    "max":    {"think": "high",  "num_predict": 18432},
 }
+# num_predict is a SHARED budget across the model's reasoning ("thinking")
+# tokens and its actual answer — not a separate allowance for each. A model
+# that reasons extensively before answering can burn through most of a small
+# budget before ever writing the JSON response, which is exactly what caused
+# "the model ran out of room" to fire disproportionately at higher power
+# levels (more thinking, same or barely-bigger budget). These are sized with
+# real headroom for both a substantial reasoning trace AND a full multi-file
+# JSON answer at each level, not just the reasoning trace alone.
 DEFAULT_POWER = "medium"
 
 _3D_REQUEST_PATTERN = re.compile(
@@ -361,8 +369,38 @@ class ReplyStreamExtractor:
         return "".join(out), False  # ran out of buffer without hitting the closing quote yet
 
 
+def repair_truncated_json(text):
+    """Best-effort repair of a JSON document that got cut off mid-stream —
+    e.g. the model hit its token budget before finishing. Walks the text
+    tracking open strings/brackets, closes a dangling string, then appends
+    whatever brackets are still open in the correct order. This turns a
+    response that's genuinely truncated but otherwise complete (the common
+    case — the model was on the last file when it ran out of room) into
+    something parseable, instead of discarding the entire response."""
+    text = text.rstrip()
+    if not text: return text
+    stack, in_string, escape = [], False, False
+    for ch in text:
+        if in_string:
+            if escape: escape = False
+            elif ch == "\\": escape = True
+            elif ch == '"': in_string = False
+        else:
+            if ch == '"': in_string = True
+            elif ch in "{[": stack.append(ch)
+            elif ch in "}]" and stack: stack.pop()
+    repaired = text
+    if in_string:
+        if repaired.endswith("\\"): repaired = repaired[:-1]  # drop a dangling escape char
+        repaired += '"'
+    for opener in reversed(stack):
+        repaired += "}" if opener == "{" else "]"
+    return repaired
+
+
 def decode_model_result(content):
-    """Accept strict JSON, fenced JSON, and imperfect free-model output."""
+    """Accept strict JSON, fenced JSON, imperfect free-model output, and
+    JSON truncated mid-stream (repaired on a best-effort basis)."""
     text = str(content or "").strip()
     if not text:
         raise ValueError("The selected model returned an empty response. Try another free model or retry.")
@@ -371,6 +409,8 @@ def decode_model_result(content):
     if fenced: candidates.append(fenced.group(1))
     start, end = text.find("{"), text.rfind("}")
     if start >= 0 and end > start: candidates.append(text[start:end + 1])
+    if start >= 0:
+        candidates.append(repair_truncated_json(text[start:]))  # last resort: assume it was cut off, try to close it
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
@@ -1191,7 +1231,7 @@ def chat():
     # code can no longer change, so all of this must happen before that.
     # Timeout scales with power level: Max reasoning + the largest token
     # budget genuinely needs more wall-clock room than a quick Low-power reply.
-    upstream_timeout = {"low": 150, "medium": 220, "high": 280, "max": 280}[power]
+    upstream_timeout = {"low": 180, "medium": 260, "high": 340, "max": 380}[power]
     upstream, last_error = None, None
     for attempt in range(2):
         try:
@@ -1245,15 +1285,26 @@ def chat():
             finally:
                 upstream.close()
 
-            if done_reason == "length":
-                yield json.dumps({"type": "error", "error": "The model ran out of room before finishing its response. Try a shorter request, break it into steps, or switch to a different model."}) + "\n"
-                return
-
+            truncated = done_reason == "length"
             try:
                 result = decode_model_result("".join(raw_parts))
-            except ValueError as error:
-                yield json.dumps({"type": "error", "error": str(error)}) + "\n"
-                return
+            except ValueError:
+                # decode_model_result already tries a best-effort repair of
+                # truncated JSON internally — if even that came up empty,
+                # fall back to the reply text that was already live-streamed
+                # and shown to the user (extractor.emitted) rather than
+                # discarding a genuinely truncated-but-mostly-fine response
+                # and producing nothing at all.
+                if extractor.emitted.strip():
+                    result = {"reply": extractor.emitted, "files": []}
+                elif truncated:
+                    yield json.dumps({"type": "error", "error": "The model ran out of room before producing anything usable. Try a shorter request, break it into steps, switch to a different model, or raise the Power level for more room."}) + "\n"
+                    return
+                else:
+                    yield json.dumps({"type": "error", "error": "The model returned an empty or unusable response. Please try again."}) + "\n"
+                    return
+            if truncated:
+                result["reply"] = (result.get("reply") or "").rstrip() + "\n\n⚠️ This response was cut short (ran out of room) — some content or files may be missing or incomplete. Try a shorter request, break it into steps, or raise the Power level for more room."
 
             files = result.get("files", [])[:12]
             workspace_id = uuid.uuid4().hex; root = WORKSPACES / workspace_id; root.mkdir()
