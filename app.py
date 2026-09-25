@@ -30,7 +30,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import matplotlib
 matplotlib.use("Agg")  # headless rendering — must be set before importing pyplot
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure  # object API only — see render_chart for why pyplot's global state is avoided
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
@@ -868,14 +868,22 @@ CHART_COLORS = ["#2fd68f", "#3f8cf2", "#9c6bf0", "#f2b45c", "#f26b6b", "#39c6c6"
 
 
 def render_chart(spec, path):
-    """Render a real data chart (matplotlib) — for actual data, not AI art."""
+    """Render a real data chart (matplotlib) — for actual data, not AI art.
+    Deliberately avoids pyplot's global figure state (plt.subplots/plt.close)
+    and uses the Figure object API directly instead: pyplot keeps a single
+    global "current figure" registry that is not thread-safe, and this route
+    now runs under gthread with several real concurrent threads — two charts
+    rendered at the same moment could otherwise interleave and corrupt or
+    close each other's figure. The Figure API has no shared global state, so
+    each call is fully independent regardless of concurrency."""
     chart_type = str(spec.get("type", "bar")).lower()
     labels = spec.get("labels") or []
     series = spec.get("series") or [{"name": "Series 1", "values": spec.get("values", [])}]
     if not series or not any(s.get("values") for s in series):
         raise ValueError("Chart spec has no data")
 
-    fig, ax = plt.subplots(figsize=(7.5, 4.6), dpi=150)
+    fig = Figure(figsize=(7.5, 4.6), dpi=150)
+    ax = fig.add_subplot(111)
     fig.patch.set_alpha(0)
 
     if chart_type == "pie":
@@ -909,7 +917,9 @@ def render_chart(spec, path):
     if spec.get("y_label"): ax.set_ylabel(str(spec["y_label"]))
     fig.tight_layout()
     fig.savefig(path, transparent=True)
-    plt.close(fig)
+    # No plt.close() needed — this figure was never registered with pyplot's
+    # global state, so there's nothing shared left to clean up; it's just
+    # garbage collected normally once `fig` goes out of scope.
 
 
 def _draw_rich_line(pdf, x, y, text, size, base_font="Helvetica"):
